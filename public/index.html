@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b8a4a" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <link rel="icon" href="/icon.svg" />
+  <title>Quickest · London</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="bar">
+    <div class="inputs">
+      <div class="field">
+        <span class="dot from"></span>
+        <input id="from" placeholder="From — address, postcode, station" autocomplete="off" />
+        <button id="locBtn" class="ghost" title="Use my location">◎</button>
+      </div>
+      <div class="field">
+        <span class="dot to"></span>
+        <input id="to" placeholder="To — where in London?" autocomplete="off" />
+      </div>
+      <button id="go" class="go">Find quickest route</button>
+    </div>
+  </header>
+
+  <div id="map"></div>
+
+  <section id="results" class="results" aria-live="polite"></section>
+
+  <div id="status" class="status hidden"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
