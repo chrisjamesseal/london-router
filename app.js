@@ -103,6 +103,7 @@ function stopLoading() {
 }
 
 const pounds = (p) => "£" + (p / 100).toFixed(2);
+const money = (p) => (p <= 0 ? "Free" : pounds(p));
 const walkMin = (m) => Math.max(1, Math.round(m / 80)); // ~80 m/min walking
 
 $("#locBtn").onclick = () => {
@@ -135,6 +136,7 @@ async function plan() {
   startLoading();
   $("#results").innerHTML = "";
   $("#tabs").classList.add("hidden");
+  document.body.classList.remove("map-open");
   try {
     const [origin, dest, bays, stations] = await Promise.all([
       geocode(originStr),
@@ -164,6 +166,8 @@ function legChip(leg) {
     return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${Math.round(leg.durationMin)} min bike</span>`;
   if (leg.mode === "walking")
     return `<span class="leg walking"><span class="ic">🚶</span>${Math.round(leg.durationMin)} min walk</span>`;
+  if (leg.mode === "car")
+    return `<span class="leg car"><span class="ic">🚗</span>${Math.round(leg.durationMin)} min ride</span>`;
   const color = lineColor(leg);
   const label = leg.mode === "bus" ? `🚌 ${leg.line || "Bus"}` : leg.line || leg.mode;
   return `<span class="leg" style="background:${color};color:${textOn(color)}">${label}</span>`;
@@ -180,12 +184,16 @@ function stepDetail(leg) {
     ic = "🚶";
     main = `Walk ${Math.round(leg.durationMin)} min`;
     sub = leg.summary || (leg.to ? `to ${leg.to}` : "");
+  } else if (leg.mode === "car") {
+    ic = "🚗";
+    main = `Car ${Math.round(leg.durationMin)} min`;
+    sub = leg.summary || "Door to door";
   } else {
     ic = leg.mode === "bus" ? "🚌" : "🚆";
     main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${Math.round(leg.durationMin)} min` : ""}`;
     sub = leg.from && leg.to ? `${leg.from} → ${leg.to}` : leg.summary || "";
   }
-  const color = leg.mode === "cycle" || leg.mode === "walking" ? "" : lineColor(leg);
+  const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
   const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
   return `<li class="step">
     <span class="step-ic"${style}>${ic}</span>
@@ -196,22 +204,58 @@ function stepDetail(leg) {
   </li>`;
 }
 
+// Rough taxi + walking estimates, synthesised from the straight-line distance.
+// Uber/Bolt are real-ish options; the free walk is the cheapest-tab gag.
+function estimates(data) {
+  const km = (data.crowMetres / 1000) * 1.3; // crow → road distance
+  const driveMin = Math.round(km * 3 + 3); // ~20 km/h London traffic + pickup
+  const uberP = Math.round(250 + 150 * km + 25 * driveMin);
+  const boltP = Math.round(uberP * 0.88);
+  const walkTotal = Math.round((km / 5) * 60); // a brisk 5 km/h
+  const opt = (label, mode, costPence, durationMin, summary, walkMetres, note) => {
+    const o = { label, costPence, durationMin, walkMetres, note, synthetic: true,
+      legs: [{ mode, durationMin, summary }] };
+    if (data.roundTrip) {
+      o.thereMin = durationMin;
+      o.backMin = durationMin;
+      o.durationMin = durationMin * 2;
+      o.costPence = costPence * 2;
+    }
+    return o;
+  };
+  return {
+    uber: opt("Uber", "car", uberP, driveMin, "Door to door by car", 0, "Estimated fare — surges with demand"),
+    bolt: opt("Bolt", "car", boltP, driveMin, "Door to door by car", 0, "Estimated fare — usually undercuts Uber"),
+    walk: opt("Walk the whole way 🚶", "walking", 0, walkTotal, "Walk every single step", Math.round(km * 1000), "Free — if your legs are up to it 🦵"),
+  };
+}
+
 function render(data) {
   const tabs = $("#tabs");
   tabs.classList.toggle("hidden", !data.options.length);
-  const byTime = [...data.options].sort((a, b) => a.durationMin - b.durationMin);
-  const byCost = [...data.options].sort((a, b) => a.costPence - b.costPence);
+  data._syn = estimates(data);
+  const fastList = [...data.options, data._syn.uber, data._syn.bolt];
+  const cheapList = [...fastList, data._syn.walk];
+  const byTime = [...fastList].sort((a, b) => a.durationMin - b.durationMin);
+  const byCost = [...cheapList].sort((a, b) => a.costPence - b.costPence);
   $("#tabFastest").textContent = byTime[0] ? `${byTime[0].durationMin} min` : "";
-  $("#tabCheapest").textContent = byCost[0] ? pounds(byCost[0].costPence) : "";
+  $("#tabCheapest").textContent = byCost[0] ? money(byCost[0].costPence) : "";
   renderResults();
 }
 
 function renderResults() {
   const data = lastResult;
   if (!data) return;
+  document.body.classList.remove("map-open"); // map only appears once a card is tapped
   const wrap = $("#results");
   wrap.innerHTML = "";
-  const opts = [...data.options].sort((a, b) =>
+  const syn = data._syn;
+  // Walk (free) is the cheapest-tab joke; taxis show in both tabs.
+  const base =
+    sortBy === "cheapest"
+      ? [...data.options, syn.uber, syn.bolt, syn.walk]
+      : [...data.options, syn.uber, syn.bolt];
+  const opts = base.sort((a, b) =>
     sortBy === "cheapest"
       ? a.costPence - b.costPence || a.durationMin - b.durationMin
       : a.durationMin - b.durationMin || a.costPence - b.costPence
@@ -234,7 +278,10 @@ function renderResults() {
       park = `<div class="park">🅿️ ${[pu, dp].filter(Boolean).join(" → ")}</div>`;
     }
     const note = o.note ? `<div class="note">💷 ${o.note}</div>` : "";
-    const ret = data.roundTrip ? '<span class="ret-tag">↔ return</span>' : "";
+    const timeBlock = data.roundTrip
+      ? `<div class="time">${o.thereMin}<small> min there</small></div>
+         <div class="backtime">↩ ${o.backMin} min back</div>`
+      : `<div class="time">${o.durationMin}<small> min</small></div>`;
     const badge =
       i === 0
         ? sortBy === "cheapest"
@@ -244,10 +291,10 @@ function renderResults() {
 
     card.innerHTML = `
       <div class="card-head">
-        ${badge}${ret}
+        ${badge}
         <div class="top">
-          <div class="time">${o.durationMin}<small> min</small></div>
-          <div class="price">${pounds(o.costPence)}<small>${o.walkMetres} m walk</small></div>
+          <div class="timewrap">${timeBlock}</div>
+          <div class="price">${money(o.costPence)}<small>${o.walkMetres} m walk</small></div>
         </div>
         <div class="label">${o.label}</div>
         <div class="legs">${legs}</div>
@@ -256,14 +303,22 @@ function renderResults() {
     card.querySelector(".card-head").onclick = () => select(o, card);
     wrap.appendChild(card);
   });
-
-  if (opts[0]) select(opts[0], wrap.firstElementChild);
 }
 
+// Tapping a card reveals the map with a route overview; tapping it again hides it.
 function select(o, card) {
+  const already = card.classList.contains("sel");
   document.querySelectorAll(".card").forEach((c) => c.classList.remove("sel"));
+  if (already) {
+    document.body.classList.remove("map-open");
+    return;
+  }
   card.classList.add("sel");
-  drawRoute(lastResult, o);
+  document.body.classList.add("map-open");
+  setTimeout(() => {
+    map.invalidateSize(); // map was hidden, so recompute its size first
+    drawRoute(lastResult, o);
+  }, 60);
 }
 
 // Sort tabs (Skyscanner-style): re-rank the same routes by time or cost.
@@ -274,6 +329,12 @@ document.querySelectorAll(".tab").forEach((tab) => {
     renderResults();
   };
 });
+
+// Close the route overview and return to the list.
+$("#mapClose").onclick = () => {
+  document.body.classList.remove("map-open");
+  document.querySelectorAll(".card").forEach((c) => c.classList.remove("sel"));
+};
 
 function dotMarker(lat, lon, color, label) {
   return L.circleMarker([lat, lon], {
