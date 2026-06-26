@@ -178,6 +178,22 @@ body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
   margin: 0; padding: 4px 16px calc(12px + env(safe-area-inset-bottom));
   font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center;
 }
+
+/* Once results are on screen, tuck Extras away to free up space. */
+body.has-results .extras { display: none; }
+
+/* pub stop (shown in the expanded card) */
+.pubbox {
+  margin-top: 10px; background: #fff7e0; border-radius: 11px; padding: 10px 12px;
+}
+.pub-name { font-weight: 800; font-size: 14px; color: #7a5b00; }
+.pub-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.pub-beers-h {
+  font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin-top: 9px;
+}
+.pub-beers { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.pub-beers li { font-size: 13px; font-weight: 600; color: var(--ink); }
 .field:focus-within { border-color: var(--brand); }
 .field input {
   flex: 1; border: 0; outline: 0; padding: 13px 4px; font-size: 16px;

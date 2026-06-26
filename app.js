@@ -146,13 +146,31 @@ function resolve(input) {
   return geocode(str);
 }
 
-// Best-effort: find a named pub near a point (for the Extras pub stop).
+// Exact tap lists aren't available in open data, so this is an indicative fallback.
+const DEFAULT_BEERS = ["Guinness", "Camden Hells", "Beavertown Neck Oil", "Estrella Damm", "Guest cask ale"];
+
+// Beers we can actually infer from the pub's OpenStreetMap tags.
+function beersFromTags(t = {}) {
+  const out = [];
+  if (t.brewery && t.brewery !== "yes") out.push(...t.brewery.split(";").map((s) => s.trim()));
+  if (t.real_ale === "yes" || t.real_ale === "only" || t.cask === "yes") out.push("Cask ales");
+  if (t["drink:beer"] && t["drink:beer"] !== "yes") out.push(t["drink:beer"]);
+  if (t.microbrewery === "yes") out.push("House microbrew");
+  if (t.craft_beer === "yes") out.push("Craft beer");
+  return [...new Set(out.filter(Boolean))];
+}
+
+// Nearest real (named) pub to a point, with beers inferred from OSM where possible.
 async function findPub(lat, lon) {
-  const q = `[out:json][timeout:8];node(around:900,${lat},${lon})[amenity=pub][name];out 1;`;
+  const q = `[out:json][timeout:10];node(around:650,${lat},${lon})[amenity=pub][name];out 15;`;
   try {
     const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: q });
     const j = await r.json();
-    return j.elements?.[0]?.tags?.name || null;
+    const pubs = (j.elements || []).filter((e) => e.tags?.name);
+    if (!pubs.length) return null;
+    const d2 = (e) => (e.lat - lat) ** 2 + (e.lon - lon) ** 2;
+    const best = pubs.sort((a, b) => d2(a) - d2(b))[0];
+    return { name: best.tags.name, lat: best.lat, lon: best.lon, beers: beersFromTags(best.tags) };
   } catch {
     return null;
   }
@@ -166,7 +184,7 @@ async function plan() {
   $("#results").innerHTML = "";
   $("#tabs").classList.add("hidden");
   $("#smallprint").classList.add("hidden");
-  document.body.classList.remove("map-open");
+  document.body.classList.remove("map-open", "has-results");
   try {
     const [origin, dest, bays, stations] = await Promise.all([
       resolve($("#from")),
@@ -181,10 +199,6 @@ async function plan() {
       stations,
     });
     if (!data.options.length) throw new Error("No routes found");
-    if ($("#pubStop").checked) {
-      const name = await findPub((origin.lat + dest.lat) / 2, (origin.lon + dest.lon) / 2);
-      data.pub = name || "a local pub";
-    }
     lastResult = data;
     render(data);
     stopLoading();
@@ -276,6 +290,7 @@ const bestScore = (o) => o.durationMin + (o.costPence / 100) * 3;
 function render(data) {
   const tabs = $("#tabs");
   tabs.classList.toggle("hidden", !data.options.length);
+  document.body.classList.toggle("has-results", data.options.length > 0);
   data._syn = estimates(data);
   const movers = [...data.options, data._syn.uber, data._syn.bolt];
   const byBest = [...movers].sort((a, b) => bestScore(a) - bestScore(b));
@@ -306,31 +321,16 @@ function renderResults() {
   const badgeLabel = sortBy === "cheapest" ? "Cheapest" : sortBy === "fastest" ? "Fastest" : "Best";
   const badgeClass = sortBy === "cheapest" ? "badge cheap" : "badge";
 
+  const pubOn = $("#pubStop").checked;
+
   opts.forEach((o, i) => {
     const card = document.createElement("div");
     card.className = "card";
     const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
+    const steps = `<ol class="steps">${o.legs.map(stepDetail).join("")}</ol>`;
+    // Pub box is filled lazily on expand (so the lookup is accurate per route).
+    const pubBox = pubOn && !o.synthetic ? '<div class="pubbox"></div>' : "";
 
-    // Step-by-step, optionally with a pub stop slipped in before the first ride.
-    const legSteps = o.legs.map(stepDetail);
-    if (data.pub && !o.synthetic) {
-      const idx = o.legs.findIndex((l) => RAIL_MODES.includes(l.mode) || l.mode === "bus");
-      const pubStep = `<li class="step"><span class="step-ic">🍺</span><div class="step-body"><div class="step-main">Pint at ${data.pub}</div><div class="step-sub">a cheeky one en route</div></div></li>`;
-      legSteps.splice(idx < 0 ? legSteps.length : idx, 0, pubStep);
-    }
-    const steps = `<ol class="steps">${legSteps.join("")}</ol>`;
-
-    let park = "";
-    if (o.pickupBay || o.dropoffBay) {
-      const pu = o.pickupBay
-        ? `Grab a <b>🍋‍🟩 Lime</b> / <b>🌳 Forest</b> e-bike near ${o.pickupBay.name} (${walkMin(o.pickupBay.metresAway)} min walk)`
-        : "";
-      const dp = o.dropoffBay
-        ? `park near ${o.dropoffBay.name}${o.station ? " by " + o.station : ""} (${walkMin(o.dropoffBay.metresAway)} min walk)`
-        : "";
-      park = `<div class="park">🅿️ ${[pu, dp].filter(Boolean).join(" → ")}</div>`;
-    }
-    const note = o.note ? `<div class="note">💷 ${o.note}</div>` : "";
     const timeBlock = data.roundTrip
       ? `<div class="time">${o.thereMin}<small> min there</small></div>
          <div class="backtime">↩ ${o.backMin} min back</div>`
@@ -349,7 +349,7 @@ function renderResults() {
         <div class="label">${o.label}</div>
         <div class="legs">${legs}</div>
       </div>
-      <div class="detail">${steps}${park}${note}</div>`;
+      <div class="detail">${steps}${pubBox}</div>`;
     card.querySelector(".card-head").onclick = () => select(o, card);
     wrap.appendChild(card);
   });
@@ -367,10 +367,40 @@ function select(o, card) {
   }
   card.classList.add("sel");
   document.body.classList.add("map-open");
+  if ($("#pubStop").checked && !o.synthetic) loadPub(o, card);
   setTimeout(() => {
     map.invalidateSize(); // map was hidden, so recompute its size first
     drawRoute(lastResult, o);
   }, 60);
+}
+
+// Look up a real pub near where this route's train/transit begins, then show it
+// (with what's usually on tap) in the expanded card. Cached per option.
+async function loadPub(o, card) {
+  const box = card.querySelector(".pubbox");
+  if (!box) return;
+  if (o._pub) return renderPub(box, o._pub);
+  box.innerHTML = '<div class="pub-name">🍺 Finding a good pub nearby…</div>';
+  const O = lastResult.origin, D = lastResult.dest;
+  const pt = o.dropoffBay || { lat: (O.lat + D.lat) / 2, lon: (O.lon + D.lon) / 2 };
+  o._pub = (await findPub(pt.lat, pt.lon)) || { name: null };
+  renderPub(box, o._pub);
+}
+
+function renderPub(box, pub) {
+  if (!pub.name) {
+    box.innerHTML = '<div class="pub-name">🍺 No pub found right by the route</div>';
+    return;
+  }
+  const beers = (pub.beers && pub.beers.length ? pub.beers : DEFAULT_BEERS)
+    .slice(0, 5)
+    .map((b) => `<li>🍺 ${b}</li>`)
+    .join("");
+  box.innerHTML = `
+    <div class="pub-name">🍺 ${pub.name}</div>
+    <div class="pub-sub">a pint before you ride</div>
+    <div class="pub-beers-h">Usually on tap</div>
+    <ul class="pub-beers">${beers}</ul>`;
 }
 
 // Sort tabs (Skyscanner-style): re-rank the same routes by time or cost.
