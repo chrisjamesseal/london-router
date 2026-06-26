@@ -19,9 +19,9 @@ let layers = L.layerGroup().addTo(map);
 let lastResult = null;
 let sortBy = "best"; // "best" | "fastest" | "cheapest"
 
-// Modes that a railcard (1/3 off) applies to — excludes bus/bike/taxi/walk.
-const RAIL_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram", "train"];
-const hasRail = (legs) => legs.some((l) => RAIL_MODES.includes(l.mode));
+// Railcards (1/3 off) apply to National Rail trains only — not the tube/bus.
+const TRAIN_MODES = ["national-rail", "train"];
+const hasTrain = (legs) => legs.some((l) => TRAIN_MODES.includes(l.mode));
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -117,9 +117,9 @@ $("#locBtn").onclick = () => {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       const { latitude, longitude } = pos.coords;
-      $("#from").value = `${latitude.toFixed(5)},${longitude.toFixed(5)}`;
-      delete $("#from").dataset.lat;
-      delete $("#from").dataset.lon;
+      $("#from").value = "📍 Current location";
+      $("#from").dataset.lat = latitude;
+      $("#from").dataset.lon = longitude;
       map.setView([latitude, longitude], 14);
       status("", false);
     },
@@ -183,7 +183,6 @@ async function plan() {
   startLoading();
   $("#results").innerHTML = "";
   $("#tabs").classList.add("hidden");
-  $("#smallprint").classList.add("hidden");
   document.body.classList.remove("map-open", "has-results");
   try {
     const [origin, dest, bays, stations] = await Promise.all([
@@ -264,8 +263,8 @@ function estimates(data) {
   const boltP = Math.round(uberP * 0.88);
   const walkTotal = Math.round((km / 5) * 60); // a brisk 5 km/h
 
-  const car = (label, costPence) => {
-    const o = { label, costPence, durationMin: driveMin, synthetic: true,
+  const car = (label, brand, costPence) => {
+    const o = { label, brand, costPence, durationMin: driveMin, synthetic: true,
       legs: [{ mode: "car", durationMin: driveMin }] };
     if (data.roundTrip) {
       o.thereMin = driveMin; o.backMin = driveMin;
@@ -280,7 +279,7 @@ function estimates(data) {
     priceSub: `${km.toFixed(1)} km` };
   if (data.roundTrip) { walk.thereMin = walkTotal; walk.backMin = walkTotal; walk.durationMin = walkTotal * 2; }
 
-  return { uber: car("Uber", uberP), bolt: car("Bolt", boltP), walk };
+  return { uber: car("Uber", "uber", uberP), bolt: car("Bolt", "bolt", boltP), walk };
 }
 
 // "Best" balances time against money — £1 ≈ 3 min, so it won't pick an Uber
@@ -335,7 +334,7 @@ function renderResults() {
       ? `<div class="time">${o.thereMin}<small> min there</small></div>
          <div class="backtime">↩ ${o.backMin} min back</div>`
       : `<div class="time">${o.durationMin}<small> min</small></div>`;
-    const rail = !o.synthetic && hasRail(o.legs) ? railcardPence(o.costPence) : null;
+    const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
     const priceSub = o.priceSub || `${o.walkMetres} m walk`;
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
 
@@ -350,11 +349,30 @@ function renderResults() {
         <div class="legs">${legs}</div>
       </div>
       <div class="detail">${steps}${pubBox}</div>`;
-    card.querySelector(".card-head").onclick = () => select(o, card);
+    card.querySelector(".card-head").onclick = o.brand
+      ? () => window.open(rideLink(o.brand), "_blank", "noopener")
+      : () => select(o, card);
     wrap.appendChild(card);
   });
 
-  $("#smallprint").classList.toggle("hidden", !opts.length);
+  // Small print scrolls at the very bottom of the list (not pinned on screen).
+  const sp = document.createElement("p");
+  sp.className = "smallprint";
+  sp.textContent = "Estimated prices and times. Check each operator for exact fares before you travel.";
+  wrap.appendChild(sp);
+}
+
+// Deep links that open the ride app with the journey pre-filled.
+function rideLink(brand) {
+  const O = lastResult.origin, D = lastResult.dest;
+  if (brand === "uber") {
+    return `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${O.lat}&pickup[longitude]=${O.lon}` +
+      `&pickup[nickname]=${encodeURIComponent(O.name || "Start")}` +
+      `&dropoff[latitude]=${D.lat}&dropoff[longitude]=${D.lon}` +
+      `&dropoff[nickname]=${encodeURIComponent(D.name || "Destination")}`;
+  }
+  // Bolt has no public coordinate deep-link; pass coords best-effort, open app.
+  return `https://bolt.eu/?pickup_lat=${O.lat}&pickup_lng=${O.lon}&destination_lat=${D.lat}&destination_lng=${D.lon}`;
 }
 
 // Tapping a card reveals the map with a route overview; tapping it again hides it.
@@ -396,8 +414,9 @@ function renderPub(box, pub) {
     .slice(0, 5)
     .map((b) => `<li>🍺 ${b}</li>`)
     .join("");
+  const gmaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pub.name)}%20${pub.lat}%2C${pub.lon}`;
   box.innerHTML = `
-    <div class="pub-name">🍺 ${pub.name}</div>
+    <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">🍺 ${pub.name} ↗</a>
     <div class="pub-sub">a pint before you ride</div>
     <div class="pub-beers-h">Usually on tap</div>
     <ul class="pub-beers">${beers}</ul>`;
@@ -477,15 +496,14 @@ function drawRoute(data, o) {
   const O = data.origin,
     D = data.dest;
   const pts = [[O.lat, O.lon]];
-  dotMarker(O.lat, O.lon, "#00b894", "Start").addTo(layers);
+  if ((O.name || "").includes("Current location"))
+    emojiMarker(O.lat, O.lon, "📍", "You are here").addTo(layers);
+  else dotMarker(O.lat, O.lon, "#00b894", "Start").addTo(layers);
   if (o.pickupBay) {
     emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
     pts.push([o.pickupBay.lat, o.pickupBay.lon]);
   }
-  if (o.dropoffBay) {
-    emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🌳", "Park e-bike").addTo(layers);
-    pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
-  }
+  if (o.dropoffBay) pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
   pts.push([D.lat, D.lon]);
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
   L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);

@@ -174,19 +174,21 @@ body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
 }
 .ex-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); }
 
-.smallprint {
-  margin: 0; padding: 4px 16px calc(12px + env(safe-area-inset-bottom));
-  font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center;
-}
-
-/* Once results are on screen, tuck Extras away to free up space. */
+/* Once results are on screen, free up vertical space for the list. */
 body.has-results .extras { display: none; }
+body.has-results .bar { padding-top: 9px; }
+body.has-results .inputs { gap: 7px; }
+body.has-results .field input { padding: 11px 4px; }
+.smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
 
 /* pub stop (shown in the expanded card) */
 .pubbox {
   margin-top: 10px; background: #fff7e0; border-radius: 11px; padding: 10px 12px;
 }
-.pub-name { font-weight: 800; font-size: 14px; color: #7a5b00; }
+.pub-name {
+  display: inline-block; font-weight: 800; font-size: 14px; color: #7a5b00; text-decoration: none;
+}
+.pub-name:active { opacity: .7; }
 .pub-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
 .pub-beers-h {
   font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
