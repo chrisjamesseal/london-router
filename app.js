@@ -254,8 +254,12 @@ function legChip(leg) {
     return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${n} Minute Bike</span>`;
   if (leg.mode === "walking")
     return `<span class="leg walking"><span class="ic">🚶</span>${n} Minute Walk</span>`;
-  if (leg.mode === "car")
-    return `<span class="leg car"><span class="ic">🚗</span>${n} Minute Ride</span>`;
+  if (leg.mode === "car") {
+    const badge = leg.brand
+      ? `<img class="pill-logo" src="${favicon(BRAND_LOGOS[leg.brand])}" alt="${leg.brand}">`
+      : '<span class="ic">🚗</span>';
+    return `<span class="leg car">${badge}${n} Minute Ride</span>`;
+  }
   const color = lineColor(leg);
   const emoji =
     leg.mode === "bus" ? "🚌 " : leg.mode === "national-rail" || leg.mode === "train" ? "🚆 " : "";
@@ -309,7 +313,7 @@ function estimates(data) {
 
   const car = (label, brand, costPence) => {
     const o = { label, brand, costPence, durationMin: driveMin, synthetic: true,
-      legs: [{ mode: "car", durationMin: driveMin }] };
+      legs: [{ mode: "car", durationMin: driveMin, brand }] };
     if (data.roundTrip) {
       o.thereMin = driveMin; o.backMin = driveMin;
       o.durationMin = driveMin * 2; o.costPence = costPence * 2;
@@ -347,7 +351,6 @@ function summaryHTML(o, data) {
     : `<div class="time">${o.durationMin}<small> min</small></div>`;
   const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
   const priceSub = o.priceSub || `${o.walkMetres} m walk`;
-  const logo = o.brand ? `<img class="brand-logo" src="${favicon(BRAND_LOGOS[o.brand])}" alt="${o.label}">` : "";
   // Pub icon (no name) appears in the summary; the name shows on the route page.
   const legChips = o.legs.map(legChip);
   if ($("#pubStop").checked && !o.synthetic) {
@@ -360,7 +363,6 @@ function summaryHTML(o, data) {
       <div class="timewrap">${timeBlock}</div>
       <div class="price">${money(o.costPence)}<small>${priceSub}</small>${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
     </div>
-    <div class="label">${logo}${cleanName(o.label)}</div>
     <div class="legs">${legs}</div>`;
 }
 
