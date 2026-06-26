@@ -241,6 +241,19 @@ function cleanName(s) {
     .replace(/[,\s]+$/, "");
   return s.replace(/\b[A-Z]{2,}\b/g, (w) => w[0] + w.slice(1).toLowerCase());
 }
+// Google Maps directions deep link for a single leg, in the matching mode.
+const mapsMode = (m) => (m === "cycle" ? "bicycling" : m === "car" ? "driving" : m === "walking" ? "walking" : "transit");
+const mapsPoint = (ll, name) =>
+  ll && ll.lat != null ? `${ll.lat},${ll.lon}` : name ? encodeURIComponent(cleanName(name)) : null;
+function mapsLink(leg) {
+  const dest = mapsPoint(leg.toLL, leg.to);
+  if (!dest) return null;
+  const origin = mapsPoint(leg.fromLL, leg.from);
+  let u = `https://www.google.com/maps/dir/?api=1&travelmode=${mapsMode(leg.mode)}&destination=${dest}`;
+  if (origin) u += `&origin=${origin}`;
+  return u;
+}
+
 // Platform / direction you'd board at, tidied (no "Station" wording).
 function cleanPlatform(s) {
   if (!s) return "";
@@ -291,6 +304,7 @@ function stepDetail(leg) {
   }
   const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
   const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
+  const link = mapsLink(leg);
   return `<li class="step">
     <span class="step-ic"${style}>${ic}</span>
     <div class="step-body">
@@ -298,6 +312,7 @@ function stepDetail(leg) {
       ${sub ? `<div class="step-sub">${sub}</div>` : ""}
       ${extra ? `<div class="step-plat">${extra}</div>` : ""}
     </div>
+    ${link ? `<a class="step-map" href="${link}" target="_blank" rel="noopener" aria-label="Open in Google Maps">↗</a>` : ""}
   </li>`;
 }
 
@@ -313,7 +328,7 @@ function estimates(data) {
 
   const car = (label, brand, costPence) => {
     const o = { label, brand, costPence, durationMin: driveMin, synthetic: true,
-      legs: [{ mode: "car", durationMin: driveMin, brand }] };
+      legs: [{ mode: "car", durationMin: driveMin, brand, fromLL: data.origin, toLL: data.dest }] };
     if (data.roundTrip) {
       o.thereMin = driveMin; o.backMin = driveMin;
       o.durationMin = driveMin * 2; o.costPence = costPence * 2;
@@ -323,8 +338,8 @@ function estimates(data) {
   };
 
   const walk = { label: "Walk 🚶", costPence: 0, durationMin: walkTotal, synthetic: true,
-    legs: [{ mode: "walking", durationMin: walkTotal }], note: "Free — bring comfy shoes 🦵",
-    priceSub: `${km.toFixed(1)} km` };
+    legs: [{ mode: "walking", durationMin: walkTotal, fromLL: data.origin, toLL: data.dest }],
+    note: "Free — bring comfy shoes 🦵", priceSub: `${km.toFixed(1)} km` };
   if (data.roundTrip) { walk.thereMin = walkTotal; walk.backMin = walkTotal; walk.durationMin = walkTotal * 2; }
 
   return { uber: car("Uber", "uber", uberP), bolt: car("Bolt", "bolt", boltP), walk };
