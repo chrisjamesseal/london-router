@@ -20,7 +20,11 @@
 
   <section class="panel">
     <div id="tabs" class="tabs hidden" role="tablist">
-      <button class="tab active" data-sort="fastest" role="tab">
+      <button class="tab active" data-sort="best" role="tab">
+        <span class="tab-k">Best</span>
+        <span class="tab-v" id="tabBest"></span>
+      </button>
+      <button class="tab" data-sort="fastest" role="tab">
         <span class="tab-k">Fastest</span>
         <span class="tab-v" id="tabFastest"></span>
       </button>
@@ -30,19 +34,36 @@
       </button>
     </div>
     <section id="results" class="results" aria-live="polite"></section>
+    <p id="smallprint" class="smallprint hidden">
+      Prices and times are estimates — fares vary by time of day, demand and ticket type.
+      Check each operator for exact, up-to-date prices before you travel.
+    </p>
   </section>
 
   <header class="bar">
     <div class="inputs">
       <div class="field">
         <span class="dot from"></span>
-        <input id="from" placeholder="From — address, postcode, station" autocomplete="off" />
+        <input id="from" placeholder="From — address or postcode" autocomplete="off" />
         <button id="locBtn" class="ghost" title="Use my location">◎</button>
+        <div id="acFrom" class="ac hidden"></div>
       </div>
       <div class="field">
         <span class="dot to"></span>
-        <input id="to" placeholder="To — where in London?" autocomplete="off" />
+        <input id="to" placeholder="To — address or postcode" autocomplete="off" />
+        <div id="acTo" class="ac hidden"></div>
       </div>
+      <details class="extras">
+        <summary>＋ Extras <span class="ex-hint">optional</span></summary>
+        <label class="ex-row">
+          <input type="checkbox" id="pubStop" />
+          <span>🍺 Add a pub stop halfway</span>
+        </label>
+        <label class="ex-row">
+          <span>👥 Travelling together</span>
+          <input type="number" id="people" min="1" placeholder="1" inputmode="numeric" />
+        </label>
+      </details>
       <div class="row">
         <label class="toggle">
           <input type="checkbox" id="return" />

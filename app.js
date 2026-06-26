@@ -1,7 +1,8 @@
 // Client-side app: the routing engine runs entirely in the browser, calling
 // TfL and Nominatim directly (both allow CORS). No backend required.
 import { plan as runPlan } from "./lib/engine.js";
-import { geocode } from "./lib/geocode.js";
+import { geocode, suggest } from "./lib/geocode.js";
+import { railcardPence } from "./lib/fares.js";
 
 const $ = (s) => document.querySelector(s);
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
@@ -16,7 +17,11 @@ L.control.zoom({ position: "topright" }).addTo(map);
 
 let layers = L.layerGroup().addTo(map);
 let lastResult = null;
-let sortBy = "fastest"; // "fastest" | "cheapest"
+let sortBy = "best"; // "best" | "fastest" | "cheapest"
+
+// Modes that a railcard (1/3 off) applies to — excludes bus/bike/taxi/walk.
+const RAIL_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram", "train"];
+const hasRail = (legs) => legs.some((l) => RAIL_MODES.includes(l.mode));
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -113,7 +118,8 @@ $("#locBtn").onclick = () => {
     (pos) => {
       const { latitude, longitude } = pos.coords;
       $("#from").value = `${latitude.toFixed(5)},${longitude.toFixed(5)}`;
-      $("#from").dataset.label = "My location";
+      delete $("#from").dataset.lat;
+      delete $("#from").dataset.lon;
       map.setView([latitude, longitude], 14);
       status("", false);
     },
@@ -124,10 +130,33 @@ $("#locBtn").onclick = () => {
 
 $("#go").onclick = plan;
 $("#to").addEventListener("keydown", (e) => e.key === "Enter" && plan());
-// Re-plan when the return toggle changes, if we already have a journey.
-$("#return").addEventListener("change", () => {
+// Re-plan when the return toggle or pub stop changes, if we already planned.
+const replanIfReady = () => {
   if ($("#from").value.trim() && $("#to").value.trim() && lastResult) plan();
-});
+};
+$("#return").addEventListener("change", replanIfReady);
+$("#pubStop").addEventListener("change", replanIfReady);
+// Party size only affects the fare split — re-render, no need to re-plan.
+$("#people").addEventListener("input", () => lastResult && render(lastResult));
+
+// Use a typeahead pick's exact coords if the user chose one; else geocode text.
+function resolve(input) {
+  const str = input.value.trim();
+  if (input.dataset.lat) return Promise.resolve({ lat: +input.dataset.lat, lon: +input.dataset.lon, name: str });
+  return geocode(str);
+}
+
+// Best-effort: find a named pub near a point (for the Extras pub stop).
+async function findPub(lat, lon) {
+  const q = `[out:json][timeout:8];node(around:900,${lat},${lon})[amenity=pub][name];out 1;`;
+  try {
+    const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: q });
+    const j = await r.json();
+    return j.elements?.[0]?.tags?.name || null;
+  } catch {
+    return null;
+  }
+}
 
 async function plan() {
   const originStr = $("#from").value.trim();
@@ -136,11 +165,12 @@ async function plan() {
   startLoading();
   $("#results").innerHTML = "";
   $("#tabs").classList.add("hidden");
+  $("#smallprint").classList.add("hidden");
   document.body.classList.remove("map-open");
   try {
     const [origin, dest, bays, stations] = await Promise.all([
-      geocode(originStr),
-      geocode(destStr),
+      resolve($("#from")),
+      resolve($("#to")),
       baysPromise,
       stationsPromise,
     ]);
@@ -151,6 +181,10 @@ async function plan() {
       stations,
     });
     if (!data.options.length) throw new Error("No routes found");
+    if ($("#pubStop").checked) {
+      const name = await findPub((origin.lat + dest.lat) / 2, (origin.lon + dest.lon) / 2);
+      data.pub = name || "a local pub";
+    }
     lastResult = data;
     render(data);
     stopLoading();
@@ -169,7 +203,9 @@ function legChip(leg) {
   if (leg.mode === "car")
     return `<span class="leg car"><span class="ic">🚗</span>${Math.round(leg.durationMin)} min ride</span>`;
   const color = lineColor(leg);
-  const label = leg.mode === "bus" ? `🚌 ${leg.line || "Bus"}` : leg.line || leg.mode;
+  const emoji =
+    leg.mode === "bus" ? "🚌 " : leg.mode === "national-rail" || leg.mode === "train" ? "🚆 " : "";
+  const label = `${emoji}${leg.line || (leg.mode === "bus" ? "Bus" : leg.mode)}`;
   return `<span class="leg" style="background:${color};color:${textOn(color)}">${label}</span>`;
 }
 
@@ -187,7 +223,7 @@ function stepDetail(leg) {
   } else if (leg.mode === "car") {
     ic = "🚗";
     main = `Car ${Math.round(leg.durationMin)} min`;
-    sub = leg.summary || "Door to door";
+    sub = leg.summary || "";
   } else {
     ic = leg.mode === "bus" ? "🚌" : "🚆";
     main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${Math.round(leg.durationMin)} min` : ""}`;
@@ -205,39 +241,47 @@ function stepDetail(leg) {
 }
 
 // Rough taxi + walking estimates, synthesised from the straight-line distance.
-// Uber/Bolt are real-ish options; the free walk is the cheapest-tab gag.
+// Uber/Bolt are real-ish options; the free walk is the gag pinned to the bottom.
 function estimates(data) {
+  const people = Math.max(1, parseInt($("#people").value, 10) || 1);
   const km = (data.crowMetres / 1000) * 1.3; // crow → road distance
   const driveMin = Math.round(km * 3 + 3); // ~20 km/h London traffic + pickup
   const uberP = Math.round(250 + 150 * km + 25 * driveMin);
   const boltP = Math.round(uberP * 0.88);
   const walkTotal = Math.round((km / 5) * 60); // a brisk 5 km/h
-  const opt = (label, mode, costPence, durationMin, summary, walkMetres, note) => {
-    const o = { label, costPence, durationMin, walkMetres, note, synthetic: true,
-      legs: [{ mode, durationMin, summary }] };
+
+  const car = (label, costPence) => {
+    const o = { label, costPence, durationMin: driveMin, synthetic: true,
+      legs: [{ mode: "car", durationMin: driveMin }] };
     if (data.roundTrip) {
-      o.thereMin = durationMin;
-      o.backMin = durationMin;
-      o.durationMin = durationMin * 2;
-      o.costPence = costPence * 2;
+      o.thereMin = driveMin; o.backMin = driveMin;
+      o.durationMin = driveMin * 2; o.costPence = costPence * 2;
     }
+    o.priceSub = people > 1 ? `${money(Math.round(o.costPence / people))} each` : "tap Extras to split";
     return o;
   };
-  return {
-    uber: opt("Uber", "car", uberP, driveMin, "Door to door by car", 0, "Estimated fare — surges with demand"),
-    bolt: opt("Bolt", "car", boltP, driveMin, "Door to door by car", 0, "Estimated fare — usually undercuts Uber"),
-    walk: opt("Walk the whole way 🚶", "walking", 0, walkTotal, "Walk every single step", Math.round(km * 1000), "Free — if your legs are up to it 🦵"),
-  };
+
+  const walk = { label: "Walk 🚶", costPence: 0, durationMin: walkTotal, synthetic: true,
+    legs: [{ mode: "walking", durationMin: walkTotal }], note: "Free — bring comfy shoes 🦵",
+    priceSub: `${km.toFixed(1)} km` };
+  if (data.roundTrip) { walk.thereMin = walkTotal; walk.backMin = walkTotal; walk.durationMin = walkTotal * 2; }
+
+  return { uber: car("Uber", uberP), bolt: car("Bolt", boltP), walk };
 }
+
+// "Best" balances time against money — £1 ≈ 3 min, so it won't pick an Uber
+// that costs a fortune to shave a few minutes off the train.
+const bestScore = (o) => o.durationMin + (o.costPence / 100) * 3;
 
 function render(data) {
   const tabs = $("#tabs");
   tabs.classList.toggle("hidden", !data.options.length);
   data._syn = estimates(data);
-  const fastList = [...data.options, data._syn.uber, data._syn.bolt];
-  const cheapList = [...fastList, data._syn.walk];
-  const byTime = [...fastList].sort((a, b) => a.durationMin - b.durationMin);
-  const byCost = [...cheapList].sort((a, b) => a.costPence - b.costPence);
+  const movers = [...data.options, data._syn.uber, data._syn.bolt];
+  const byBest = [...movers].sort((a, b) => bestScore(a) - bestScore(b));
+  const byTime = [...movers].sort((a, b) => a.durationMin - b.durationMin);
+  const byCost = [...movers].sort((a, b) => a.costPence - b.costPence);
+  $("#tabBest").textContent = byBest[0] ? `${byBest[0].durationMin} min` : "";
   $("#tabFastest").textContent = byTime[0] ? `${byTime[0].durationMin} min` : "";
   $("#tabCheapest").textContent = byCost[0] ? money(byCost[0].costPence) : "";
   renderResults();
@@ -250,22 +294,31 @@ function renderResults() {
   const wrap = $("#results");
   wrap.innerHTML = "";
   const syn = data._syn;
-  // Walk (free) is the cheapest-tab joke; taxis show in both tabs.
-  const base =
+  const sorter =
     sortBy === "cheapest"
-      ? [...data.options, syn.uber, syn.bolt, syn.walk]
-      : [...data.options, syn.uber, syn.bolt];
-  const opts = base.sort((a, b) =>
-    sortBy === "cheapest"
-      ? a.costPence - b.costPence || a.durationMin - b.durationMin
-      : a.durationMin - b.durationMin || a.costPence - b.costPence
-  );
+      ? (a, b) => a.costPence - b.costPence || a.durationMin - b.durationMin
+      : sortBy === "fastest"
+      ? (a, b) => a.durationMin - b.durationMin || a.costPence - b.costPence
+      : (a, b) => bestScore(a) - bestScore(b);
+  const movers = [...data.options, syn.uber, syn.bolt].sort(sorter);
+  const opts = [...movers, syn.walk]; // free walk always sits at the bottom
+
+  const badgeLabel = sortBy === "cheapest" ? "Cheapest" : sortBy === "fastest" ? "Fastest" : "Best";
+  const badgeClass = sortBy === "cheapest" ? "badge cheap" : "badge";
 
   opts.forEach((o, i) => {
     const card = document.createElement("div");
     card.className = "card";
     const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
-    const steps = `<ol class="steps">${o.legs.map(stepDetail).join("")}</ol>`;
+
+    // Step-by-step, optionally with a pub stop slipped in before the first ride.
+    const legSteps = o.legs.map(stepDetail);
+    if (data.pub && !o.synthetic) {
+      const idx = o.legs.findIndex((l) => RAIL_MODES.includes(l.mode) || l.mode === "bus");
+      const pubStep = `<li class="step"><span class="step-ic">🍺</span><div class="step-body"><div class="step-main">Pint at ${data.pub}</div><div class="step-sub">a cheeky one en route</div></div></li>`;
+      legSteps.splice(idx < 0 ? legSteps.length : idx, 0, pubStep);
+    }
+    const steps = `<ol class="steps">${legSteps.join("")}</ol>`;
 
     let park = "";
     if (o.pickupBay || o.dropoffBay) {
@@ -282,19 +335,16 @@ function renderResults() {
       ? `<div class="time">${o.thereMin}<small> min there</small></div>
          <div class="backtime">↩ ${o.backMin} min back</div>`
       : `<div class="time">${o.durationMin}<small> min</small></div>`;
-    const badge =
-      i === 0
-        ? sortBy === "cheapest"
-          ? '<span class="badge cheap">Cheapest</span>'
-          : '<span class="badge">Fastest</span>'
-        : "";
+    const rail = !o.synthetic && hasRail(o.legs) ? railcardPence(o.costPence) : null;
+    const priceSub = o.priceSub || `${o.walkMetres} m walk`;
+    const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
 
     card.innerHTML = `
       <div class="card-head">
         ${badge}
         <div class="top">
           <div class="timewrap">${timeBlock}</div>
-          <div class="price">${money(o.costPence)}<small>${o.walkMetres} m walk</small></div>
+          <div class="price">${money(o.costPence)}<small>${priceSub}</small>${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
         </div>
         <div class="label">${o.label}</div>
         <div class="legs">${legs}</div>
@@ -303,6 +353,8 @@ function renderResults() {
     card.querySelector(".card-head").onclick = () => select(o, card);
     wrap.appendChild(card);
   });
+
+  $("#smallprint").classList.toggle("hidden", !opts.length);
 }
 
 // Tapping a card reveals the map with a route overview; tapping it again hides it.
@@ -335,6 +387,40 @@ $("#mapClose").onclick = () => {
   document.body.classList.remove("map-open");
   document.querySelectorAll(".card").forEach((c) => c.classList.remove("sel"));
 };
+
+// Location typeahead: debounced suggestions, tap to fill (with exact coords).
+function attachAutocomplete(input, box) {
+  let timer;
+  input.addEventListener("input", () => {
+    delete input.dataset.lat; // typing invalidates any previously picked coords
+    delete input.dataset.lon;
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 3) return box.classList.add("hidden");
+    timer = setTimeout(async () => {
+      const items = await suggest(q);
+      if (!items.length || input.value.trim() !== q) return box.classList.add("hidden");
+      box._items = items;
+      box.innerHTML = items
+        .map((s, i) => `<div class="ac-item" data-i="${i}">${s.name}</div>`)
+        .join("");
+      box.classList.remove("hidden");
+    }, 250);
+  });
+  // mousedown fires before blur, so the pick lands before the box hides.
+  box.addEventListener("mousedown", (e) => {
+    const el = e.target.closest(".ac-item");
+    if (!el) return;
+    const s = box._items[+el.dataset.i];
+    input.value = s.name;
+    input.dataset.lat = s.lat;
+    input.dataset.lon = s.lon;
+    box.classList.add("hidden");
+  });
+  input.addEventListener("blur", () => setTimeout(() => box.classList.add("hidden"), 150));
+}
+attachAutocomplete($("#from"), $("#acFrom"));
+attachAutocomplete($("#to"), $("#acTo"));
 
 function dotMarker(lat, lon, color, label) {
   return L.circleMarker([lat, lon], {
