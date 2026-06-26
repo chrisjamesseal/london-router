@@ -23,22 +23,29 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Map is hidden until a route card is tapped, then shown as an overview. */
-#map { display: none; min-height: 160px; z-index: 0; }
-body.map-open #map { display: block; flex: 1 1 auto; }
+/* results panel: tabs + list, above the bottom search bar */
+.panel { display: flex; flex-direction: column; background: var(--bg); flex: 1 1 auto; min-height: 0; }
 
-.map-close {
-  display: none; position: fixed; z-index: 600;
+/* Single-route page: full-screen, own scroll, map at the top (not sticky). */
+#detail {
+  position: fixed; inset: 0; z-index: 800; background: var(--bg);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+#detail.hidden { display: none; }
+#detail #map { height: 46vh; min-height: 220px; z-index: 0; }
+.detailpage {
+  padding: 12px 12px calc(20px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 12px;
+}
+.d-head { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 14px 15px; }
+.detailpage .steps { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 6px 15px; }
+.backbtn {
+  position: fixed; z-index: 850;
   top: calc(10px + env(safe-area-inset-top)); left: 12px;
   border: 0; background: var(--card); color: var(--ink);
   font-family: inherit; font-weight: 700; font-size: 14px;
   padding: 9px 15px; border-radius: 99px; box-shadow: var(--shadow); cursor: pointer;
 }
-body.map-open .map-close { display: block; }
-
-/* results panel sits between the map and the bottom search bar */
-.panel { display: flex; flex-direction: column; background: var(--bg); flex: 1 1 auto; min-height: 0; }
-body.map-open .panel { flex: 0 0 auto; }
 
 /* Skyscanner-style sort tabs */
 .tabs {
@@ -63,7 +70,6 @@ body.map-open .panel { flex: 0 0 auto; }
   padding: 8px 12px 12px;
   display: flex; flex-direction: column; gap: 10px;
 }
-body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
 .results:empty { display: none; }
 
 .card {
@@ -80,7 +86,7 @@ body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
   letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px;
 }
 .badge.cheap { background: var(--accent); }
-.card .top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .timewrap { display: flex; flex-direction: column; }
 .time { font-size: 27px; font-weight: 800; letter-spacing: -.01em; }
 .time small { font-size: 14px; font-weight: 600; color: var(--muted); }
@@ -88,7 +94,8 @@ body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
 .price { font-size: 19px; font-weight: 800; color: var(--brand); text-align: right; }
 .price small { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); }
 .price small.rail { color: var(--accent-dark); font-weight: 700; }
-.label { font-weight: 600; font-size: 13.5px; color: var(--muted); margin: 3px 0 9px; }
+.label { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px; color: var(--muted); margin: 3px 0 9px; }
+.brand-logo { width: 18px; height: 18px; border-radius: 4px; flex: 0 0 auto; }
 .legs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .leg {
   display: inline-flex; align-items: center; gap: 5px;
@@ -100,11 +107,9 @@ body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
 .leg.car { background: #e9e2ff; color: #4b2fbf; font-weight: 700; }
 .arrow { color: var(--muted); font-size: 12px; }
 
-/* expandable detail */
-.detail { padding: 0 15px; max-height: 0; overflow: hidden; transition: max-height .25s ease, padding .25s ease; }
-.card.sel .detail { max-height: 600px; padding: 0 15px 14px; }
-.steps { list-style: none; margin: 4px 0 0; padding: 0; }
-.step { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; position: relative; }
+/* route steps (single-route page) */
+.steps { list-style: none; margin: 0; padding: 0; }
+.step { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; position: relative; }
 .step + .step { border-top: 1px dashed var(--line); }
 .step-ic {
   flex: 0 0 auto; width: 28px; height: 28px; border-radius: 9px;
@@ -113,19 +118,16 @@ body.map-open .results { flex: 0 0 auto; max-height: 40vh; }
 .step-body { flex: 1; min-width: 0; }
 .step-main { font-size: 13.5px; font-weight: 600; }
 .step-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
-.park {
-  margin-top: 10px; font-size: 12.5px; color: var(--accent-dark);
-  background: #e7faf3; border-radius: 11px; padding: 9px 11px;
+
+/* pub stop (a step on the route) */
+.pub-step .step-ic { background: #fff1cc; }
+.pub-name {
+  display: inline-block; font-weight: 800; font-size: 14px; color: #7a5b00; text-decoration: none;
 }
-.park b { font-weight: 700; }
-.note {
-  margin-top: 7px; font-size: 12.5px; color: #7a5b00;
-  background: #fff7e0; border-radius: 11px; padding: 8px 11px;
-}
-.ret-tag {
-  float: right; font-size: 10.5px; font-weight: 700; color: var(--brand);
-  background: #e7f0fd; border-radius: 99px; padding: 3px 9px;
-}
+.pub-name:active { opacity: .7; }
+.pub-beers { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pub-beers li { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.beer-logo { width: 18px; height: 18px; border-radius: 4px; flex: 0 0 auto; }
 
 /* bottom search bar — placed within thumb's reach */
 .bar {
@@ -179,23 +181,9 @@ body.has-results .extras { display: none; }
 body.has-results .bar { padding-top: 9px; }
 body.has-results .inputs { gap: 7px; }
 body.has-results .field input { padding: 11px 4px; }
+body.has-results .ac { display: none; } /* never overlap the results list */
 .smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
 
-/* pub stop (shown in the expanded card) */
-.pubbox {
-  margin-top: 10px; background: #fff7e0; border-radius: 11px; padding: 10px 12px;
-}
-.pub-name {
-  display: inline-block; font-weight: 800; font-size: 14px; color: #7a5b00; text-decoration: none;
-}
-.pub-name:active { opacity: .7; }
-.pub-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
-.pub-beers-h {
-  font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--muted); margin-top: 9px;
-}
-.pub-beers { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.pub-beers li { font-size: 13px; font-weight: 600; color: var(--ink); }
 .field:focus-within { border-color: var(--brand); }
 .field input {
   flex: 1; border: 0; outline: 0; padding: 13px 4px; font-size: 16px;

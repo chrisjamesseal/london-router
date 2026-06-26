@@ -15,16 +15,9 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="map"></div>
-  <button id="mapClose" class="map-close">✕ Back to list</button>
-
   <section class="panel">
     <div id="tabs" class="tabs hidden" role="tablist">
-      <button class="tab active" data-sort="best" role="tab">
-        <span class="tab-k">Best</span>
-        <span class="tab-v" id="tabBest"></span>
-      </button>
-      <button class="tab" data-sort="fastest" role="tab">
+      <button class="tab active" data-sort="fastest" role="tab">
         <span class="tab-k">Fastest</span>
         <span class="tab-v" id="tabFastest"></span>
       </button>
@@ -34,6 +27,13 @@
       </button>
     </div>
     <section id="results" class="results" aria-live="polite"></section>
+  </section>
+
+  <!-- Single-route page: own screen, map at the top (scrolls, not sticky). -->
+  <section id="detail" class="hidden">
+    <button id="backBtn" class="backbtn">← Back</button>
+    <div id="map"></div>
+    <div id="detailContent" class="detailpage"></div>
   </section>
 
   <header class="bar">

@@ -17,11 +17,29 @@ L.control.zoom({ position: "topright" }).addTo(map);
 
 let layers = L.layerGroup().addTo(map);
 let lastResult = null;
-let sortBy = "best"; // "best" | "fastest" | "cheapest"
+let sortBy = "fastest"; // "fastest" | "cheapest"
 
 // Railcards (1/3 off) apply to National Rail trains only — not the tube/bus.
 const TRAIN_MODES = ["national-rail", "train"];
 const hasTrain = (legs) => legs.some((l) => TRAIN_MODES.includes(l.mode));
+// Where you'd board (and so stop for a pint just before).
+const BOARD_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "train", "tram", "bus"];
+
+// Small favicon-style logos via Google's favicon service.
+const favicon = (domain) => `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+const BRAND_LOGOS = { uber: "uber.com", bolt: "bolt.eu" };
+const BEER_LOGOS = {
+  guinness: "guinness.com", camden: "camdentownbrewery.com",
+  "neck oil": "beavertownbrewery.co.uk", beavertown: "beavertownbrewery.co.uk",
+  estrella: "estrelladamm.com", "london pride": "fullers.co.uk", "fuller": "fullers.co.uk",
+  peroni: "peroni.co.uk", stella: "stellaartois.com", heineken: "heineken.com",
+  madri: "madriexcepcional.com", asahi: "asahibeer.co.uk", "birra moretti": "birramoretti.com",
+};
+function beerLogo(name) {
+  const n = name.toLowerCase();
+  for (const k in BEER_LOGOS) if (n.includes(k)) return favicon(BEER_LOGOS[k]);
+  return null;
+}
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -88,7 +106,7 @@ const LOADING_LINES = [
   "Finding the quickest way…",
   "Hunting down the cheapest route…",
   "Racing tubes, buses & e-bikes…",
-  "Checking 🍋‍🟩 Lime & 🌳 Forest bikes…",
+  "Checking 🍋‍🟩 Lime e-bikes…",
   "Sniffing out clever shortcuts…",
   "Skipping the slow changes…",
   "Beating plain old Maps…",
@@ -183,7 +201,10 @@ async function plan() {
   startLoading();
   $("#results").innerHTML = "";
   $("#tabs").classList.add("hidden");
-  document.body.classList.remove("map-open", "has-results");
+  closeDetail();
+  document.body.classList.remove("has-results");
+  $("#acFrom").classList.add("hidden");
+  $("#acTo").classList.add("hidden");
   try {
     const [origin, dest, bays, stations] = await Promise.all([
       resolve($("#from")),
@@ -209,12 +230,13 @@ async function plan() {
 }
 
 function legChip(leg) {
+  const n = Math.round(leg.durationMin);
   if (leg.mode === "cycle")
-    return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${Math.round(leg.durationMin)} min bike</span>`;
+    return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${n} Minute Bike</span>`;
   if (leg.mode === "walking")
-    return `<span class="leg walking"><span class="ic">🚶</span>${Math.round(leg.durationMin)} min walk</span>`;
+    return `<span class="leg walking"><span class="ic">🚶</span>${n} Minute Walk</span>`;
   if (leg.mode === "car")
-    return `<span class="leg car"><span class="ic">🚗</span>${Math.round(leg.durationMin)} min ride</span>`;
+    return `<span class="leg car"><span class="ic">🚗</span>${n} Minute Ride</span>`;
   const color = lineColor(leg);
   const emoji =
     leg.mode === "bus" ? "🚌 " : leg.mode === "national-rail" || leg.mode === "train" ? "🚆 " : "";
@@ -222,24 +244,25 @@ function legChip(leg) {
   return `<span class="leg" style="background:${color};color:${textOn(color)}">${label}</span>`;
 }
 
-// A detailed, concise step for the expanded card view.
+// A detailed, concise step for the single-route page.
 function stepDetail(leg) {
+  const n = Math.round(leg.durationMin);
   let ic, main, sub;
   if (leg.mode === "cycle") {
     ic = "🍋‍🟩";
-    main = `E-bike ${Math.round(leg.durationMin)} min`;
+    main = `${n} Minute Bike`;
     sub = leg.summary || (leg.to ? `to ${leg.to}` : "");
   } else if (leg.mode === "walking") {
     ic = "🚶";
-    main = `Walk ${Math.round(leg.durationMin)} min`;
+    main = `${n} Minute Walk`;
     sub = leg.summary || (leg.to ? `to ${leg.to}` : "");
   } else if (leg.mode === "car") {
     ic = "🚗";
-    main = `Car ${Math.round(leg.durationMin)} min`;
+    main = `${n} Minute Ride`;
     sub = leg.summary || "";
   } else {
     ic = leg.mode === "bus" ? "🚌" : "🚆";
-    main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${Math.round(leg.durationMin)} min` : ""}`;
+    main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${n} min` : ""}`;
     sub = leg.from && leg.to ? `${leg.from} → ${leg.to}` : leg.summary || "";
   }
   const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
@@ -282,76 +305,62 @@ function estimates(data) {
   return { uber: car("Uber", "uber", uberP), bolt: car("Bolt", "bolt", boltP), walk };
 }
 
-// "Best" balances time against money — £1 ≈ 3 min, so it won't pick an Uber
-// that costs a fortune to shave a few minutes off the train.
-const bestScore = (o) => o.durationMin + (o.costPence / 100) * 3;
-
 function render(data) {
   const tabs = $("#tabs");
   tabs.classList.toggle("hidden", !data.options.length);
   document.body.classList.toggle("has-results", data.options.length > 0);
   data._syn = estimates(data);
   const movers = [...data.options, data._syn.uber, data._syn.bolt];
-  const byBest = [...movers].sort((a, b) => bestScore(a) - bestScore(b));
   const byTime = [...movers].sort((a, b) => a.durationMin - b.durationMin);
   const byCost = [...movers].sort((a, b) => a.costPence - b.costPence);
-  $("#tabBest").textContent = byBest[0] ? `${byBest[0].durationMin} min` : "";
   $("#tabFastest").textContent = byTime[0] ? `${byTime[0].durationMin} min` : "";
   $("#tabCheapest").textContent = byCost[0] ? money(byCost[0].costPence) : "";
   renderResults();
 }
 
+// Time/price block reused by the list cards and the single-route page.
+function summaryHTML(o, data) {
+  const timeBlock = data.roundTrip
+    ? `<div class="time">${o.thereMin}<small> min there</small></div>
+       <div class="backtime">↩ ${o.backMin} min back</div>`
+    : `<div class="time">${o.durationMin}<small> min</small></div>`;
+  const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
+  const priceSub = o.priceSub || `${o.walkMetres} m walk`;
+  const logo = o.brand ? `<img class="brand-logo" src="${favicon(BRAND_LOGOS[o.brand])}" alt="${o.label}">` : "";
+  const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
+  return `
+    <div class="top">
+      <div class="timewrap">${timeBlock}</div>
+      <div class="price">${money(o.costPence)}<small>${priceSub}</small>${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
+    </div>
+    <div class="label">${logo}${o.label}</div>
+    <div class="legs">${legs}</div>`;
+}
+
 function renderResults() {
   const data = lastResult;
   if (!data) return;
-  document.body.classList.remove("map-open"); // map only appears once a card is tapped
   const wrap = $("#results");
   wrap.innerHTML = "";
   const syn = data._syn;
   const sorter =
     sortBy === "cheapest"
       ? (a, b) => a.costPence - b.costPence || a.durationMin - b.durationMin
-      : sortBy === "fastest"
-      ? (a, b) => a.durationMin - b.durationMin || a.costPence - b.costPence
-      : (a, b) => bestScore(a) - bestScore(b);
+      : (a, b) => a.durationMin - b.durationMin || a.costPence - b.costPence;
   const movers = [...data.options, syn.uber, syn.bolt].sort(sorter);
   const opts = [...movers, syn.walk]; // free walk always sits at the bottom
 
-  const badgeLabel = sortBy === "cheapest" ? "Cheapest" : sortBy === "fastest" ? "Fastest" : "Best";
+  const badgeLabel = sortBy === "cheapest" ? "Cheapest" : "Fastest";
   const badgeClass = sortBy === "cheapest" ? "badge cheap" : "badge";
-
-  const pubOn = $("#pubStop").checked;
 
   opts.forEach((o, i) => {
     const card = document.createElement("div");
     card.className = "card";
-    const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
-    const steps = `<ol class="steps">${o.legs.map(stepDetail).join("")}</ol>`;
-    // Pub box is filled lazily on expand (so the lookup is accurate per route).
-    const pubBox = pubOn && !o.synthetic ? '<div class="pubbox"></div>' : "";
-
-    const timeBlock = data.roundTrip
-      ? `<div class="time">${o.thereMin}<small> min there</small></div>
-         <div class="backtime">↩ ${o.backMin} min back</div>`
-      : `<div class="time">${o.durationMin}<small> min</small></div>`;
-    const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
-    const priceSub = o.priceSub || `${o.walkMetres} m walk`;
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
-
-    card.innerHTML = `
-      <div class="card-head">
-        ${badge}
-        <div class="top">
-          <div class="timewrap">${timeBlock}</div>
-          <div class="price">${money(o.costPence)}<small>${priceSub}</small>${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
-        </div>
-        <div class="label">${o.label}</div>
-        <div class="legs">${legs}</div>
-      </div>
-      <div class="detail">${steps}${pubBox}</div>`;
+    card.innerHTML = `<div class="card-head">${badge}${summaryHTML(o, data)}</div>`;
     card.querySelector(".card-head").onclick = o.brand
       ? () => window.open(rideLink(o.brand), "_blank", "noopener")
-      : () => select(o, card);
+      : () => openDetail(o);
     wrap.appendChild(card);
   });
 
@@ -376,49 +385,56 @@ function rideLink(brand) {
 }
 
 // Tapping a card reveals the map with a route overview; tapping it again hides it.
-function select(o, card) {
-  const already = card.classList.contains("sel");
-  document.querySelectorAll(".card").forEach((c) => c.classList.remove("sel"));
-  if (already) {
-    document.body.classList.remove("map-open");
-    return;
+// Open the single-route page: own screen, map at top (scrolls), steps below.
+function openDetail(o) {
+  const data = lastResult;
+  const pubOn = $("#pubStop").checked && !o.synthetic;
+
+  const legSteps = o.legs.map(stepDetail);
+  if (pubOn) {
+    let idx = o.legs.findIndex((l) => BOARD_MODES.includes(l.mode));
+    if (idx < 0) idx = legSteps.length;
+    legSteps.splice(idx, 0, '<li class="step pub-step"><span class="step-ic">🍺</span><div class="step-body"><div class="pub-name">Finding a good pub…</div></div></li>');
   }
-  card.classList.add("sel");
-  document.body.classList.add("map-open");
-  if ($("#pubStop").checked && !o.synthetic) loadPub(o, card);
+
+  $("#detailContent").innerHTML = `
+    <div class="d-head">${summaryHTML(o, data)}</div>
+    <ol class="steps">${legSteps.join("")}</ol>`;
+  $("#detail").classList.remove("hidden");
+  document.body.classList.add("detail-open");
+  $("#detail").scrollTop = 0;
   setTimeout(() => {
-    map.invalidateSize(); // map was hidden, so recompute its size first
-    drawRoute(lastResult, o);
+    map.invalidateSize(); // map lives in the hidden page until now
+    drawRoute(data, o);
   }, 60);
+  if (pubOn) loadPub(o);
 }
 
-// Look up a real pub near where this route's train/transit begins, then show it
-// (with what's usually on tap) in the expanded card. Cached per option.
-async function loadPub(o, card) {
-  const box = card.querySelector(".pubbox");
-  if (!box) return;
-  if (o._pub) return renderPub(box, o._pub);
-  box.innerHTML = '<div class="pub-name">🍺 Finding a good pub nearby…</div>';
+function closeDetail() {
+  $("#detail").classList.add("hidden");
+  document.body.classList.remove("detail-open");
+}
+
+// Look up a real pub near where this route boards, then drop it into its step.
+async function loadPub(o) {
+  const step = $("#detailContent .pub-step");
+  if (!step) return;
   const O = lastResult.origin, D = lastResult.dest;
   const pt = o.dropoffBay || { lat: (O.lat + D.lat) / 2, lon: (O.lon + D.lon) / 2 };
-  o._pub = (await findPub(pt.lat, pt.lon)) || { name: null };
-  renderPub(box, o._pub);
-}
-
-function renderPub(box, pub) {
-  if (!pub.name) {
-    box.innerHTML = '<div class="pub-name">🍺 No pub found right by the route</div>';
-    return;
-  }
+  if (!o._pub) o._pub = (await findPub(pt.lat, pt.lon)) || { name: null };
+  const body = step.querySelector(".step-body");
+  const pub = o._pub;
+  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No pub right by the route</div>');
   const beers = (pub.beers && pub.beers.length ? pub.beers : DEFAULT_BEERS)
     .slice(0, 5)
-    .map((b) => `<li>🍺 ${b}</li>`)
+    .map((b) => {
+      const logo = beerLogo(b);
+      return `<li>${logo ? `<img class="beer-logo" src="${logo}" alt="">` : "🍺"} ${b}</li>`;
+    })
     .join("");
   const gmaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pub.name)}%20${pub.lat}%2C${pub.lon}`;
-  box.innerHTML = `
-    <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">🍺 ${pub.name} ↗</a>
-    <div class="pub-sub">a pint before you ride</div>
-    <div class="pub-beers-h">Usually on tap</div>
+  body.innerHTML = `
+    <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
     <ul class="pub-beers">${beers}</ul>`;
 }
 
@@ -431,11 +447,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
   };
 });
 
-// Close the route overview and return to the list.
-$("#mapClose").onclick = () => {
-  document.body.classList.remove("map-open");
-  document.querySelectorAll(".card").forEach((c) => c.classList.remove("sel"));
-};
+$("#backBtn").onclick = closeDetail;
 
 // Location typeahead: debounced suggestions, tap to fill (with exact coords).
 function attachAutocomplete(input, box) {
@@ -503,7 +515,10 @@ function drawRoute(data, o) {
     emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
     pts.push([o.pickupBay.lat, o.pickupBay.lon]);
   }
-  if (o.dropoffBay) pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
+  if (o.dropoffBay) {
+    emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🅿️", "Drop off the bike").addTo(layers);
+    pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
+  }
   pts.push([D.lat, D.lon]);
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
   L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);
