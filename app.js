@@ -1,3 +1,8 @@
+// Client-side app: the routing engine runs entirely in the browser, calling
+// TfL and Nominatim directly (both allow CORS). No backend required.
+import { plan as runPlan } from "/lib/engine.js";
+import { geocode } from "/lib/geocode.js";
+
 const $ = (s) => document.querySelector(s);
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -8,6 +13,10 @@ L.control.zoom({ position: "bottomright" }).addTo(map);
 
 let layers = L.layerGroup().addTo(map);
 let lastResult = null;
+
+// Load the parking-bay dataset once (cached by the service worker after first
+// visit). Kick it off immediately so it's ready by the time you plan.
+let baysPromise = fetch("/data/bays.json").then((r) => r.json());
 
 const MODE_ICON = {
   walking: "🚶",
@@ -52,25 +61,27 @@ $("#go").onclick = plan;
 $("#to").addEventListener("keydown", (e) => e.key === "Enter" && plan());
 
 async function plan() {
-  const origin = $("#from").value.trim();
-  const dest = $("#to").value.trim();
-  if (!origin || !dest) return status("Enter both From and To", false);
+  const originStr = $("#from").value.trim();
+  const destStr = $("#to").value.trim();
+  if (!originStr || !destStr) return status("Enter both From and To", false);
   status("Finding the quickest way…", true);
   $("#results").innerHTML = "";
   try {
-    const res = await fetch("/api/plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ origin, dest }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Planning failed");
+    const [origin, dest, bays] = await Promise.all([
+      geocode(originStr),
+      geocode(destStr),
+      baysPromise,
+    ]);
+    if (!origin) throw new Error(`Couldn't find "${originStr}"`);
+    if (!dest) throw new Error(`Couldn't find "${destStr}"`);
+    const data = await runPlan(origin, dest, bays);
+    if (!data.options.length) throw new Error("No routes found");
     lastResult = data;
     render(data);
     status("", false);
   } catch (e) {
-    status(e.message, false);
-    setTimeout(() => status("", false), 3500);
+    status(e.message || "Planning failed", false);
+    setTimeout(() => status("", false), 4000);
   }
 }
 
@@ -89,9 +100,7 @@ function render(data) {
   data.options.forEach((o, i) => {
     const card = document.createElement("div");
     card.className = "card" + (o.fastest ? " fastest" : "");
-    const legs = o.legs
-      .map(legChip)
-      .join('<span class="arrow">›</span>');
+    const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
     let park = "";
     if (o.pickupBay || o.dropoffBay) {
       const pu = o.pickupBay

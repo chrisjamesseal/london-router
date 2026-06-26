@@ -9,7 +9,9 @@ import * as tfl from "./lib/tfl.js";
 import { haversine } from "./lib/geo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PUBLIC = join(__dirname, "public");
+// The web root is the repo root now (static-first). The /api routes below are
+// kept for optional local server-side use, but the deployed app is static.
+const PUBLIC = __dirname;
 const PORT = process.env.PORT || 3000;
 
 // --- bays dataset ----------------------------------------------------------
