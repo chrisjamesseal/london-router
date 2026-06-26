@@ -79,13 +79,44 @@ body {
   background: #f0f4f2; border-radius: 8px; padding: 4px 8px; font-size: 13px;
 }
 .leg .ic { font-size: 14px; }
-.leg.cycle { background: #e6f6ec; color: var(--green-dark); font-weight: 600; }
+.leg:not([style]) { color: #fff; } /* coloured transit chips set their own bg */
+.leg.cycle { background: #d8f7c2; color: #2f6d00; font-weight: 700; }
+.leg.walking { background: #eef1f0; color: var(--muted); }
 .arrow { color: var(--muted); font-size: 12px; }
 .park {
   margin-top: 9px; font-size: 13px; color: var(--green-dark);
   background: #eefaf1; border-radius: 9px; padding: 8px 10px;
 }
-.park b { font-weight: 600; }
+.park b { font-weight: 700; }
+.note {
+  margin-top: 6px; font-size: 12.5px; color: #7a5b00;
+  background: #fff7e0; border-radius: 9px; padding: 7px 10px;
+}
+.ret-tag {
+  float: right; font-size: 11px; font-weight: 700; color: var(--green-dark);
+  background: #e6f6ec; border-radius: 99px; padding: 3px 9px;
+}
+
+/* return-journey toggle */
+.toggle { display: flex; align-items: center; gap: 9px; padding: 2px 4px; cursor: pointer; }
+.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle .track {
+  width: 40px; height: 23px; border-radius: 99px; background: rgba(255,255,255,.45);
+  position: relative; flex: 0 0 auto; transition: background .15s;
+}
+.toggle .track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 19px; height: 19px;
+  border-radius: 50%; background: #fff; transition: transform .15s;
+}
+.toggle input:checked + .track { background: var(--green-dark); }
+.toggle input:checked + .track::after { transform: translateX(17px); }
+.toggle .lbl { color: #fff; font-size: 13px; }
+
+/* emoji map pins */
+.emoji-pin { background: none; border: 0; }
+.emoji-pin span {
+  font-size: 22px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4));
+}
 
 .status {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);

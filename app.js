@@ -17,18 +17,55 @@ let lastResult = null;
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
 let baysPromise = fetch("./data/bays.json").then((r) => r.json());
+let stationsPromise = fetch("./data/stations.json").then((r) => r.json());
 
-const MODE_ICON = {
-  walking: "🚶",
-  cycle: "🚲",
-  bus: "🚌",
-  tube: "🚇",
-  dlr: "🚈",
-  overground: "🚆",
-  "elizabeth-line": "🚆",
-  "national-rail": "🚆",
-  tram: "🚊",
+// Official TfL line colours, keyed by lower-cased line name ("… line" trimmed).
+const LINE_COLORS = {
+  bakerloo: "#B36305",
+  central: "#E32017",
+  circle: "#FFD300",
+  district: "#00782A",
+  "hammersmith & city": "#F3A9BB",
+  jubilee: "#A0A5A9",
+  metropolitan: "#9B0056",
+  northern: "#000000",
+  piccadilly: "#003688",
+  victoria: "#0098D4",
+  "waterloo & city": "#95CDBA",
+  elizabeth: "#6950A1",
+  dlr: "#00A4A7",
+  overground: "#EE7C0E",
+  "london overground": "#EE7C0E",
+  liberty: "#5D6061",
+  lioness: "#FAA61A",
+  mildmay: "#0079C2",
+  suffragette: "#76B82A",
+  weaver: "#823A62",
+  windrush: "#DC241F",
+  tram: "#5FB526",
+  thameslink: "#E10A8E",
 };
+const MODE_COLORS = {
+  bus: "#E1251B",
+  "national-rail": "#7A7A7A",
+  dlr: "#00A4A7",
+  overground: "#EE7C0E",
+  "elizabeth-line": "#6950A1",
+  tram: "#5FB526",
+  tube: "#10069F",
+};
+
+function lineColor(leg) {
+  if (leg.mode === "bus") return MODE_COLORS.bus;
+  const ln = (leg.line || "").toLowerCase().replace(/\s+line$/, "").trim();
+  return LINE_COLORS[ln] || MODE_COLORS[leg.mode] || "#6b7b73";
+}
+function textOn(hex) {
+  const r = parseInt(hex.slice(1, 3), 16),
+    g = parseInt(hex.slice(3, 5), 16),
+    b = parseInt(hex.slice(5, 7), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62 ? "#14211b" : "#fff";
+}
 
 function status(msg, spinner) {
   const el = $("#status");
@@ -37,9 +74,8 @@ function status(msg, spinner) {
   el.classList.remove("hidden");
 }
 
-function pounds(p) {
-  return "£" + (p / 100).toFixed(2);
-}
+const pounds = (p) => "£" + (p / 100).toFixed(2);
+const walkMin = (m) => Math.max(1, Math.round(m / 80)); // ~80 m/min walking
 
 $("#locBtn").onclick = () => {
   if (!navigator.geolocation) return status("No geolocation", false);
@@ -59,6 +95,10 @@ $("#locBtn").onclick = () => {
 
 $("#go").onclick = plan;
 $("#to").addEventListener("keydown", (e) => e.key === "Enter" && plan());
+// Re-plan when the return toggle changes, if we already have a journey.
+$("#return").addEventListener("change", () => {
+  if ($("#from").value.trim() && $("#to").value.trim() && lastResult) plan();
+});
 
 async function plan() {
   const originStr = $("#from").value.trim();
@@ -67,14 +107,18 @@ async function plan() {
   status("Finding the quickest way…", true);
   $("#results").innerHTML = "";
   try {
-    const [origin, dest, bays] = await Promise.all([
+    const [origin, dest, bays, stations] = await Promise.all([
       geocode(originStr),
       geocode(destStr),
       baysPromise,
+      stationsPromise,
     ]);
     if (!origin) throw new Error(`Couldn't find "${originStr}"`);
     if (!dest) throw new Error(`Couldn't find "${destStr}"`);
-    const data = await runPlan(origin, dest, bays);
+    const data = await runPlan(origin, dest, bays, {
+      returnTrip: $("#return").checked,
+      stations,
+    });
     if (!data.options.length) throw new Error("No routes found");
     lastResult = data;
     render(data);
@@ -86,12 +130,13 @@ async function plan() {
 }
 
 function legChip(leg) {
-  const ic = MODE_ICON[leg.mode] || "•";
-  let txt = leg.line || leg.mode;
-  if (leg.mode === "cycle") txt = `${Math.round(leg.durationMin)}m bike`;
-  else if (leg.mode === "walking") txt = `${Math.round(leg.durationMin)}m walk`;
-  else if (leg.line) txt = leg.line;
-  return `<span class="leg ${leg.mode}"><span class="ic">${ic}</span>${txt}</span>`;
+  if (leg.mode === "cycle")
+    return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${Math.round(leg.durationMin)} min bike</span>`;
+  if (leg.mode === "walking")
+    return `<span class="leg walking"><span class="ic">🚶</span>${Math.round(leg.durationMin)} min walk</span>`;
+  const color = lineColor(leg);
+  const label = leg.mode === "bus" ? `🚌 ${leg.line || "Bus"}` : leg.line || leg.mode;
+  return `<span class="leg" style="background:${color};color:${textOn(color)}">${label}</span>`;
 }
 
 function render(data) {
@@ -101,25 +146,29 @@ function render(data) {
     const card = document.createElement("div");
     card.className = "card" + (o.fastest ? " fastest" : "");
     const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
+
     let park = "";
     if (o.pickupBay || o.dropoffBay) {
       const pu = o.pickupBay
-        ? `Grab a bike at <b>${o.pickupBay.name}</b> (${o.pickupBay.metresAway}m)`
+        ? `Grab a <b>🍋‍🟩 Lime</b> / <b>🌳 Forest</b> e-bike near ${o.pickupBay.name} (${walkMin(o.pickupBay.metresAway)} min walk)`
         : "";
       const dp = o.dropoffBay
-        ? `Park at <b>${o.dropoffBay.name}</b>${o.station ? " by " + o.station : ""} (${o.dropoffBay.metresAway}m)`
+        ? `park near ${o.dropoffBay.name}${o.station ? " by " + o.station : ""} (${walkMin(o.dropoffBay.metresAway)} min walk)`
         : "";
       park = `<div class="park">🅿️ ${[pu, dp].filter(Boolean).join(" → ")}</div>`;
     }
+    const note = o.note ? `<div class="note">💷 ${o.note}</div>` : "";
+    const ret = data.roundTrip ? '<span class="ret-tag">↔ return</span>' : "";
+
     card.innerHTML = `
-      ${o.fastest ? '<span class="badge">Quickest</span>' : ""}
+      ${o.fastest ? '<span class="badge">Quickest</span>' : ""}${ret}
       <div class="top">
         <div class="time">${o.durationMin}<small> min</small></div>
-        <div class="meta">${pounds(o.costPence)}<br>${o.walkMetres}m walk</div>
+        <div class="meta">${pounds(o.costPence)}<br>${o.walkMetres} m walk</div>
       </div>
       <div class="label">${o.label}</div>
       <div class="legs">${legs}</div>
-      ${park}`;
+      ${park}${note}`;
     card.onclick = () => select(i, card);
     wrap.appendChild(card);
   });
@@ -132,31 +181,42 @@ function select(i, card) {
   drawRoute(lastResult, lastResult.options[i]);
 }
 
-function marker(lat, lon, color, label) {
+function dotMarker(lat, lon, color, label) {
   return L.circleMarker([lat, lon], {
     radius: 8,
     color: "#fff",
     weight: 2,
     fillColor: color,
     fillOpacity: 1,
-  }).bindTooltip(label, { permanent: false });
+  }).bindTooltip(label);
+}
+function emojiMarker(lat, lon, emoji, label) {
+  return L.marker([lat, lon], {
+    icon: L.divIcon({
+      className: "emoji-pin",
+      html: `<span>${emoji}</span>`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+    }),
+  }).bindTooltip(label);
 }
 
 function drawRoute(data, o) {
   layers.clearLayers();
-  const O = data.origin, D = data.dest;
+  const O = data.origin,
+    D = data.dest;
   const pts = [[O.lat, O.lon]];
-  marker(O.lat, O.lon, "#0b8a4a", "Start").addTo(layers);
+  dotMarker(O.lat, O.lon, "#0b8a4a", "Start").addTo(layers);
   if (o.pickupBay) {
-    marker(o.pickupBay.lat, o.pickupBay.lon, "#2bb673", "🚲 Grab bike").addTo(layers);
+    emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
     pts.push([o.pickupBay.lat, o.pickupBay.lon]);
   }
   if (o.dropoffBay) {
-    marker(o.dropoffBay.lat, o.dropoffBay.lon, "#2bb673", "🅿️ Park bike").addTo(layers);
+    emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🌳", "Park e-bike").addTo(layers);
     pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
   }
   pts.push([D.lat, D.lon]);
-  marker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
+  dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
   L.polyline(pts, { color: "#0b8a4a", weight: 3, dashArray: "6 6", opacity: 0.7 }).addTo(layers);
   map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
