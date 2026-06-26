@@ -3,19 +3,19 @@
 // - Same-origin GETs (incl. the big bays.json) are cached on first use
 //   (stale-while-revalidate).
 // - Live API calls to TfL / Nominatim always hit the network.
-const CACHE = "quickest-v2";
+const CACHE = "quickest-v3";
 const SHELL = [
-  "/",
-  "/index.html",
-  "/style.css",
-  "/app.js",
-  "/icon.svg",
-  "/manifest.webmanifest",
-  "/lib/engine.js",
-  "/lib/tfl.js",
-  "/lib/fares.js",
-  "/lib/geo.js",
-  "/lib/geocode.js",
+  "./",
+  "./index.html",
+  "./style.css",
+  "./app.js",
+  "./icon.svg",
+  "./manifest.webmanifest",
+  "./lib/engine.js",
+  "./lib/tfl.js",
+  "./lib/fares.js",
+  "./lib/geo.js",
+  "./lib/geocode.js",
 ];
 
 self.addEventListener("install", (e) => {

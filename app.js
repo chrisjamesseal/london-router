@@ -1,7 +1,7 @@
 // Client-side app: the routing engine runs entirely in the browser, calling
 // TfL and Nominatim directly (both allow CORS). No backend required.
-import { plan as runPlan } from "/lib/engine.js";
-import { geocode } from "/lib/geocode.js";
+import { plan as runPlan } from "./lib/engine.js";
+import { geocode } from "./lib/geocode.js";
 
 const $ = (s) => document.querySelector(s);
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
@@ -16,7 +16,7 @@ let lastResult = null;
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
-let baysPromise = fetch("/data/bays.json").then((r) => r.json());
+let baysPromise = fetch("./data/bays.json").then((r) => r.json());
 
 const MODE_ICON = {
   walking: "🚶",
@@ -162,5 +162,5 @@ function drawRoute(data, o) {
 }
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
