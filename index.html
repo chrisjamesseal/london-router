@@ -62,14 +62,18 @@
       </div>
       <details class="extras">
         <summary>＋ Extras <span class="ex-hint">Optional</span></summary>
-        <label class="ex-row">
+        <label class="ex-row check">
           <input type="checkbox" id="pubStop" />
           <span>🍺 Add a Pub Stop Halfway</span>
         </label>
-        <label class="ex-row">
+        <div class="ex-row">
           <span>👥 Travelling Together</span>
-          <input type="number" id="people" min="1" placeholder="1" inputmode="numeric" />
-        </label>
+          <div class="stepper">
+            <button type="button" id="peopleMinus" aria-label="Fewer people">−</button>
+            <span id="peopleVal">1</span>
+            <button type="button" id="peoplePlus" aria-label="More people">+</button>
+          </div>
+        </div>
       </details>
       <div class="row">
         <label class="toggle">

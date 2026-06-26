@@ -183,7 +183,18 @@ body {
   width: 64px; border: 1.5px solid var(--line); border-radius: 10px;
   padding: 8px 10px; font-size: 15px; font-family: inherit; text-align: center;
 }
-.ex-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); }
+.ex-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); flex: 0 0 auto; }
+/* checkbox sits right next to its label, not spread apart */
+.ex-row.check { justify-content: flex-start; gap: 10px; }
+/* +/- people stepper */
+.stepper { display: flex; align-items: center; gap: 12px; }
+.stepper button {
+  width: 32px; height: 32px; border-radius: 9px; border: 1.5px solid var(--line);
+  background: var(--card); color: var(--brand); font-size: 20px; font-weight: 700;
+  font-family: inherit; cursor: pointer; display: grid; place-items: center; line-height: 1;
+}
+.stepper button:active { background: var(--bg); }
+#peopleVal { min-width: 16px; text-align: center; font-weight: 800; font-size: 16px; }
 
 /* Once results are on screen, free up vertical space for the list. */
 body.has-results .extras { display: none; }

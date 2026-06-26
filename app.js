@@ -154,8 +154,15 @@ const replanIfReady = () => {
 };
 $("#return").addEventListener("change", replanIfReady);
 $("#pubStop").addEventListener("change", replanIfReady);
-// Party size only affects the fare split — re-render, no need to re-plan.
-$("#people").addEventListener("input", () => lastResult && render(lastResult));
+// Party size (+/- stepper) only affects the fare split — re-render, no re-plan.
+let peopleCount = 1;
+function setPeople(n) {
+  peopleCount = Math.max(1, n);
+  $("#peopleVal").textContent = peopleCount;
+  if (lastResult) render(lastResult);
+}
+$("#peopleMinus").onclick = () => setPeople(peopleCount - 1);
+$("#peoplePlus").onclick = () => setPeople(peopleCount + 1);
 
 // Use a typeahead pick's exact coords if the user chose one; else geocode text.
 function resolve(input) {
@@ -243,12 +250,17 @@ function cleanName(s) {
 }
 // Google Maps directions deep link for a single leg, in the matching mode.
 const mapsMode = (m) => (m === "cycle" ? "bicycling" : m === "car" ? "driving" : m === "walking" ? "walking" : "transit");
-const mapsPoint = (ll, name) =>
-  ll && ll.lat != null ? `${ll.lat},${ll.lon}` : name ? encodeURIComponent(cleanName(name)) : null;
+// Prefer a real place name over coordinates; never pass the literal "Current Location".
+function pointQuery(pt, name) {
+  const nm = (pt && pt.name) || name;
+  if (nm && !/current location/i.test(nm)) return encodeURIComponent(cleanName(nm));
+  if (pt && pt.lat != null) return `${pt.lat},${pt.lon}`;
+  return null;
+}
 function mapsLink(leg) {
-  const dest = mapsPoint(leg.toLL, leg.to);
+  const dest = pointQuery(leg.toLL, leg.to);
   if (!dest) return null;
-  const origin = mapsPoint(leg.fromLL, leg.from);
+  const origin = pointQuery(leg.fromLL, leg.from);
   let u = `https://www.google.com/maps/dir/?api=1&travelmode=${mapsMode(leg.mode)}&destination=${dest}`;
   if (origin) u += `&origin=${origin}`;
   return u;
@@ -319,7 +331,7 @@ function stepDetail(leg) {
 // Rough taxi + walking estimates, synthesised from the straight-line distance.
 // Uber/Bolt are real-ish options; the free walk is the gag pinned to the bottom.
 function estimates(data) {
-  const people = Math.max(1, parseInt($("#people").value, 10) || 1);
+  const people = peopleCount;
   const km = (data.crowMetres / 1000) * 1.3; // crow → road distance
   const driveMin = Math.round(km * 3 + 3); // ~20 km/h London traffic + pickup
   const uberP = Math.round(250 + 150 * km + 25 * driveMin);
@@ -333,7 +345,7 @@ function estimates(data) {
       o.thereMin = driveMin; o.backMin = driveMin;
       o.durationMin = driveMin * 2; o.costPence = costPence * 2;
     }
-    o.priceSub = people > 1 ? `${money(Math.round(o.costPence / people))} each` : "tap Extras to split";
+    o.priceSub = people > 1 ? `${money(Math.round(o.costPence / people))} each` : "Tap Extras to Split";
     return o;
   };
 
@@ -428,22 +440,41 @@ function rideLink(brand) {
   return `https://bolt.eu/?pickup_lat=${O.lat}&pickup_lng=${O.lon}&destination_lat=${D.lat}&destination_lng=${D.lon}`;
 }
 
-// Tapping a card reveals the map with a route overview; tapping it again hides it.
+// A start/end point row, linking to that place on Google Maps.
+function endpointStep(kind, pt) {
+  const ic = kind === "start" ? "🟢" : "🏁";
+  const label = kind === "start" ? "Start" : "End";
+  const q = pointQuery(pt);
+  const link = q ? `https://www.google.com/maps/search/?api=1&query=${q}` : null;
+  return `<li class="step">
+    <span class="step-ic">${ic}</span>
+    <div class="step-body"><div class="step-main">${label}</div><div class="step-sub">${cleanName(pt.name || "")}</div></div>
+    ${link ? `<a class="step-map" href="${link}" target="_blank" rel="noopener" aria-label="Open in Google Maps">↗</a>` : ""}
+  </li>`;
+}
+
 // Open the single-route page: own screen, map at top (scrolls), steps below.
 function openDetail(o) {
   const data = lastResult;
   const pubOn = $("#pubStop").checked && !o.synthetic;
 
-  const legSteps = o.legs.map(stepDetail);
+  // Anchor the journey to the entered start/end (so links use those, by name).
+  const legs = o.legs.map((l) => ({ ...l }));
+  if (legs.length) {
+    legs[0] = { ...legs[0], from: data.origin.name, fromLL: data.origin };
+    legs[legs.length - 1] = { ...legs[legs.length - 1], to: data.dest.name, toLL: data.dest };
+  }
+
+  const legSteps = legs.map(stepDetail);
   if (pubOn) {
-    let idx = o.legs.findIndex((l) => BOARD_MODES.includes(l.mode));
+    let idx = legs.findIndex((l) => BOARD_MODES.includes(l.mode));
     if (idx < 0) idx = legSteps.length;
     legSteps.splice(idx, 0, '<li class="step pub-step"><span class="step-ic">🍺</span><div class="step-body"><div class="pub-name">Finding a good pub…</div></div></li>');
   }
 
   $("#detailContent").innerHTML = `
     <div class="d-head">${summaryHTML(o, data)}</div>
-    <ol class="steps">${legSteps.join("")}</ol>`;
+    <ol class="steps">${endpointStep("start", data.origin)}${legSteps.join("")}${endpointStep("end", data.dest)}</ol>`;
   $("#detail").classList.remove("hidden");
   document.body.classList.add("detail-open");
   $("#detail").scrollTop = 0;
@@ -469,17 +500,17 @@ async function loadPub(o) {
   const body = step.querySelector(".step-body");
   const pub = o._pub;
   if (!pub.name) return (body.innerHTML = '<div class="pub-name">No Pub on Route</div>');
+  // Only show beers we have a real logo for, so it looks official.
   const beers = (pub.beers && pub.beers.length ? pub.beers : DEFAULT_BEERS)
+    .map((b) => ({ b, logo: beerLogo(b) }))
+    .filter((x) => x.logo)
     .slice(0, 5)
-    .map((b) => {
-      const logo = beerLogo(b);
-      return `<li>${logo ? `<img class="beer-logo" src="${logo}" alt="">` : "🍺"} ${b}</li>`;
-    })
+    .map((x) => `<li><img class="beer-logo" src="${x.logo}" alt=""> ${x.b}</li>`)
     .join("");
   const gmaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pub.name)}%20${pub.lat}%2C${pub.lon}`;
   body.innerHTML = `
     <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
-    <ul class="pub-beers">${beers}</ul>`;
+    ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}`;
 }
 
 // Sort tabs (Skyscanner-style): re-rank the same routes by time or cost.
