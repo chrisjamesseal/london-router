@@ -40,23 +40,34 @@
     <div class="inputs">
       <div class="field">
         <span class="dot from"></span>
-        <input id="from" placeholder="From — address or postcode" autocomplete="off" />
-        <button id="locBtn" class="ghost" title="Use my location">◎</button>
+        <input id="from" placeholder="From — Address or Postcode" autocomplete="off" />
+        <button class="clear" data-for="from" type="button" aria-label="Clear">✕</button>
+        <button id="locBtn" class="ghost" title="Use my location" aria-label="Use my location">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="7"></circle>
+            <line x1="12" y1="1.5" x2="12" y2="4.5"></line>
+            <line x1="12" y1="19.5" x2="12" y2="22.5"></line>
+            <line x1="1.5" y1="12" x2="4.5" y2="12"></line>
+            <line x1="19.5" y1="12" x2="22.5" y2="12"></line>
+            <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"></circle>
+          </svg>
+        </button>
         <div id="acFrom" class="ac hidden"></div>
       </div>
       <div class="field">
         <span class="dot to"></span>
-        <input id="to" placeholder="To — address or postcode" autocomplete="off" />
+        <input id="to" placeholder="To — Address or Postcode" autocomplete="off" />
+        <button class="clear" data-for="to" type="button" aria-label="Clear">✕</button>
         <div id="acTo" class="ac hidden"></div>
       </div>
       <details class="extras">
-        <summary>＋ Extras <span class="ex-hint">optional</span></summary>
+        <summary>＋ Extras <span class="ex-hint">Optional</span></summary>
         <label class="ex-row">
           <input type="checkbox" id="pubStop" />
-          <span>🍺 Add a pub stop halfway</span>
+          <span>🍺 Add a Pub Stop Halfway</span>
         </label>
         <label class="ex-row">
-          <span>👥 Travelling together</span>
+          <span>👥 Travelling Together</span>
           <input type="number" id="people" min="1" placeholder="1" inputmode="numeric" />
         </label>
       </details>
@@ -64,9 +75,9 @@
         <label class="toggle">
           <input type="checkbox" id="return" />
           <span class="track"></span>
-          <span class="lbl">↔ Return journey</span>
+          <span class="lbl">↔ Return Journey</span>
         </label>
-        <button id="go" class="go">Find route</button>
+        <button id="go" class="go">Find Route</button>
       </div>
     </div>
   </header>

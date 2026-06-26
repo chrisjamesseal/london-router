@@ -105,6 +105,7 @@ body {
 .leg.cycle { background: #d8f7ec; color: var(--accent-dark); font-weight: 700; }
 .leg.walking { background: #eef1f5; color: var(--muted); }
 .leg.car { background: #e9e2ff; color: #4b2fbf; font-weight: 700; }
+.leg.pub { background: #fff1cc; padding: 4px 7px; }
 .arrow { color: var(--muted); font-size: 12px; }
 
 /* route steps (single-route page) */
@@ -118,6 +119,7 @@ body {
 .step-body { flex: 1; min-width: 0; }
 .step-main { font-size: 13.5px; font-weight: 600; }
 .step-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.step-plat { font-size: 12px; font-weight: 700; color: var(--brand); margin-top: 2px; }
 
 /* pub stop (a step on the route) */
 .pub-step .step-ic { background: #fff1cc; }
@@ -194,8 +196,17 @@ body.has-results .ac { display: none; } /* never overlap the results list */
 .dot.to { background: #e0533d; }
 .ghost {
   border: 0; background: #e7f0fd; color: var(--brand);
-  width: 34px; height: 34px; border-radius: 10px; font-size: 18px; cursor: pointer;
+  width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
+  display: grid; place-items: center; flex: 0 0 auto;
 }
+.ghost svg { display: block; }
+
+/* clear (✕) button — only while the field has text */
+.clear {
+  display: none; border: 0; background: transparent; color: var(--muted);
+  width: 26px; height: 26px; border-radius: 50%; font-size: 14px; cursor: pointer; flex: 0 0 auto;
+}
+.field input:not(:placeholder-shown) ~ .clear { display: grid; place-items: center; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .go {
   border: 0; background: var(--brand); color: #fff; font-weight: 700;

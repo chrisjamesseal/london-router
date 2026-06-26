@@ -135,7 +135,7 @@ $("#locBtn").onclick = () => {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       const { latitude, longitude } = pos.coords;
-      $("#from").value = "📍 Current location";
+      $("#from").value = "Current Location";
       $("#from").dataset.lat = latitude;
       $("#from").dataset.lon = longitude;
       map.setView([latitude, longitude], 14);
@@ -229,6 +229,25 @@ async function plan() {
   }
 }
 
+// Drop the redundant "Station" wording and tidy ALL-CAPS (LONDON → London).
+function cleanName(s) {
+  if (!s) return s || "";
+  s = s
+    .replace(/\b(Rail|Underground|DLR|Overground|Tram)\s+Station\b/gi, "")
+    .replace(/\bStation\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,)])/g, "$1")
+    .trim()
+    .replace(/[,\s]+$/, "");
+  return s.replace(/\b[A-Z]{2,}\b/g, (w) => w[0] + w.slice(1).toLowerCase());
+}
+// Platform / direction you'd board at, tidied (no "Station" wording).
+function cleanPlatform(s) {
+  if (!s) return "";
+  s = s.replace(/\bStation\b/gi, "").replace(/\s{2,}/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function legChip(leg) {
   const n = Math.round(leg.durationMin);
   if (leg.mode === "cycle")
@@ -247,15 +266,15 @@ function legChip(leg) {
 // A detailed, concise step for the single-route page.
 function stepDetail(leg) {
   const n = Math.round(leg.durationMin);
-  let ic, main, sub;
+  let ic, main, sub, extra = "";
   if (leg.mode === "cycle") {
     ic = "🍋‍🟩";
     main = `${n} Minute Bike`;
-    sub = leg.summary || (leg.to ? `to ${leg.to}` : "");
+    sub = cleanName(leg.summary || (leg.to ? `to ${leg.to}` : ""));
   } else if (leg.mode === "walking") {
     ic = "🚶";
     main = `${n} Minute Walk`;
-    sub = leg.summary || (leg.to ? `to ${leg.to}` : "");
+    sub = cleanName(leg.summary || (leg.to ? `to ${leg.to}` : ""));
   } else if (leg.mode === "car") {
     ic = "🚗";
     main = `${n} Minute Ride`;
@@ -263,7 +282,8 @@ function stepDetail(leg) {
   } else {
     ic = leg.mode === "bus" ? "🚌" : "🚆";
     main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${n} min` : ""}`;
-    sub = leg.from && leg.to ? `${leg.from} → ${leg.to}` : leg.summary || "";
+    sub = leg.from && leg.to ? `${cleanName(leg.from)} → ${cleanName(leg.to)}` : cleanName(leg.summary || "");
+    extra = cleanPlatform(leg.platform || leg.direction);
   }
   const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
   const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
@@ -272,6 +292,7 @@ function stepDetail(leg) {
     <div class="step-body">
       <div class="step-main">${main}</div>
       ${sub ? `<div class="step-sub">${sub}</div>` : ""}
+      ${extra ? `<div class="step-plat">${extra}</div>` : ""}
     </div>
   </li>`;
 }
@@ -327,13 +348,19 @@ function summaryHTML(o, data) {
   const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
   const priceSub = o.priceSub || `${o.walkMetres} m walk`;
   const logo = o.brand ? `<img class="brand-logo" src="${favicon(BRAND_LOGOS[o.brand])}" alt="${o.label}">` : "";
-  const legs = o.legs.map(legChip).join('<span class="arrow">›</span>');
+  // Pub icon (no name) appears in the summary; the name shows on the route page.
+  const legChips = o.legs.map(legChip);
+  if ($("#pubStop").checked && !o.synthetic) {
+    let idx = o.legs.findIndex((l) => BOARD_MODES.includes(l.mode));
+    legChips.splice(idx < 0 ? legChips.length : idx, 0, '<span class="leg pub"><span class="ic">🍺</span></span>');
+  }
+  const legs = legChips.join('<span class="arrow">›</span>');
   return `
     <div class="top">
       <div class="timewrap">${timeBlock}</div>
       <div class="price">${money(o.costPence)}<small>${priceSub}</small>${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
     </div>
-    <div class="label">${logo}${o.label}</div>
+    <div class="label">${logo}${cleanName(o.label)}</div>
     <div class="legs">${legs}</div>`;
 }
 
@@ -424,7 +451,7 @@ async function loadPub(o) {
   if (!o._pub) o._pub = (await findPub(pt.lat, pt.lon)) || { name: null };
   const body = step.querySelector(".step-body");
   const pub = o._pub;
-  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No pub right by the route</div>');
+  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No Pub on Route</div>');
   const beers = (pub.beers && pub.beers.length ? pub.beers : DEFAULT_BEERS)
     .slice(0, 5)
     .map((b) => {
@@ -483,6 +510,17 @@ function attachAutocomplete(input, box) {
 attachAutocomplete($("#from"), $("#acFrom"));
 attachAutocomplete($("#to"), $("#acTo"));
 
+// Clear (✕) button inside each field.
+document.querySelectorAll(".clear").forEach((btn) => {
+  btn.onclick = () => {
+    const input = $("#" + btn.dataset.for);
+    input.value = "";
+    delete input.dataset.lat;
+    delete input.dataset.lon;
+    input.focus();
+  };
+});
+
 function dotMarker(lat, lon, color, label) {
   return L.circleMarker([lat, lon], {
     radius: 8,
@@ -508,7 +546,7 @@ function drawRoute(data, o) {
   const O = data.origin,
     D = data.dest;
   const pts = [[O.lat, O.lon]];
-  if ((O.name || "").includes("Current location"))
+  if ((O.name || "").toLowerCase().includes("current location"))
     emojiMarker(O.lat, O.lon, "📍", "You are here").addTo(layers);
   else dotMarker(O.lat, O.lon, "#00b894", "Start").addTo(layers);
   if (o.pickupBay) {
