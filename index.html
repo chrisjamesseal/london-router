@@ -20,19 +20,21 @@
       <img src="icon.svg" class="brand-logo-img" alt="" />
       <span>Quickest</span>
     </button>
-    <span class="ver">0.25</span>
+    <button class="ver" id="verPill">0.26</button>
   </header>
+
+  <div id="changelog" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head"><b>What's new</b><button id="changelogClose" class="sheet-x">✕</button></div>
+      <div id="changelogBody" class="sheet-body"></div>
+    </div>
+  </div>
 
   <section class="panel">
     <div id="splash" class="splash">
       <img src="icon.svg" class="splash-logo" alt="" />
       <h1 class="splash-title">Quickest</h1>
-      <p class="splash-sub">London, the quickest way.</p>
-      <ul class="splash-feats">
-        <li>🚲 Bike, Train, Tube, Bus, Cabs</li>
-        <li>💷 Find Fastest &amp; Cheapest Fares</li>
-        <li>🍺 Add a Pub Stop On Route</li>
-      </ul>
+      <p class="splash-feat">🚲 Bike, Train, Tube, Bus &amp; Cabs</p>
     </div>
     <div id="tabs" class="tabs hidden" role="tablist">
       <button class="tab active" data-sort="fastest" role="tab">
@@ -45,19 +47,21 @@
       </button>
       <button class="tab" data-sort="custom" role="tab">
         <span class="tab-k">Custom</span>
-        <span class="tab-v">⚙️</span>
+        <span class="tab-v tab-new">New</span>
       </button>
     </div>
 
     <!-- Custom tab: tweak options here, then hit Update -->
     <div id="custom" class="custom hidden">
-      <div class="ex-line between">
-        <span>👥 Travellers</span>
-        <div class="seg" id="peopleSeg">
+      <div class="ex-line col">
+        <span class="ex-h">👥 Travellers</span>
+        <div class="seg full" id="peopleSeg">
           <button type="button" data-n="1" class="on">1</button>
           <button type="button" data-n="2">2</button>
           <button type="button" data-n="3">3</button>
           <button type="button" data-n="4">4</button>
+          <button type="button" data-n="5">5</button>
+          <button type="button" data-n="6">6</button>
         </div>
       </div>
       <div class="ex-line col">
@@ -70,19 +74,31 @@
         <input type="datetime-local" id="whenTime" class="when-time hidden" />
       </div>
       <div class="ex-line col">
-        <span class="ex-h">🚫 Avoid</span>
-        <div class="avoid" id="avoid">
-          <label><input type="checkbox" data-mode="bike" />🚲 Bike</label>
-          <label><input type="checkbox" data-mode="tube" />🚇 Tube</label>
-          <label><input type="checkbox" data-mode="train" />🚆 Train</label>
-          <label><input type="checkbox" data-mode="bus" />🚌 Bus</label>
-          <label><input type="checkbox" data-mode="cab" />🚗 Cabs</label>
+        <span class="ex-h">🍺 Pub Stop</span>
+        <div class="seg full" id="pubSeg">
+          <button type="button" data-pub="" class="on">None</button>
+          <button type="button" data-pub="jubel">🍋 Jubel</button>
+          <button type="button" data-pub="guinness">🖤 Guinness</button>
+        </div>
+        <span class="ex-note">Pubs serving it, up to a 15 min walk off-route (not added to your journey time).</span>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">💳 Discounts</span>
+        <div class="avoid" id="discounts">
+          <label data-disc="railcard"><input type="checkbox" />🚆 Railcard</label>
+          <label data-disc="uberone"><input type="checkbox" />🚗 Uber One</label>
         </div>
       </div>
-      <label class="ex-line">
-        <input type="checkbox" id="pubStop" />
-        <span>🍺 Add a Pub Stop</span>
-      </label>
+      <div class="ex-line col">
+        <span class="ex-h">🚫 Avoid</span>
+        <div class="avoid" id="avoid">
+          <label data-mode="bike"><input type="checkbox" data-mode="bike" />🚲 Bike</label>
+          <label data-mode="tube"><input type="checkbox" data-mode="tube" />🚇 Tube</label>
+          <label data-mode="train"><input type="checkbox" data-mode="train" />🚆 Train</label>
+          <label data-mode="bus"><input type="checkbox" data-mode="bus" />🚌 Bus</label>
+          <label data-mode="cab"><input type="checkbox" data-mode="cab" />🚗 Cabs</label>
+        </div>
+      </div>
       <p class="custom-hint">Tap <b>Update</b> to apply.</p>
     </div>
 

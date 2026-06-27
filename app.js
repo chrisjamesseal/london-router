@@ -15,13 +15,15 @@ L.tileLayer("https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
 }).addTo(map);
 L.control.zoom({ position: "topright" }).addTo(map);
 
-// "Reset map" control — re-fit to the route preview after zooming/panning.
+// "Reset map" control (bottom-right) — re-fit to the route preview, then hide
+// itself until the next route is drawn.
 let lastRoutePts = null;
+let resetBtn = null;
 function resetMapView() {
   if (lastRoutePts && lastRoutePts.length) map.fitBounds(L.latLngBounds(lastRoutePts).pad(0.25));
 }
 const ResetControl = L.Control.extend({
-  options: { position: "bottomleft" },
+  options: { position: "bottomright" },
   onAdd() {
     const b = L.DomUtil.create("button", "map-reset");
     b.type = "button";
@@ -29,7 +31,9 @@ const ResetControl = L.Control.extend({
     L.DomEvent.on(b, "click", (e) => {
       L.DomEvent.stop(e);
       resetMapView();
+      b.style.display = "none";
     });
+    resetBtn = b;
     return b;
   },
 });
@@ -44,6 +48,7 @@ const TRAIN_MODES = ["national-rail", "train"];
 const hasTrain = (legs) => legs.some((l) => TRAIN_MODES.includes(l.mode));
 // Where you'd board (and so stop for a pint just before).
 const BOARD_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "train", "tram", "bus"];
+const RAIL_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "train", "tram"];
 
 // Small favicon-style logos via Google's favicon service.
 const favicon = (domain) => `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
@@ -175,6 +180,13 @@ function stopLoading() {
 const pounds = (p) => "£" + (p / 100).toFixed(2);
 const money = (p) => (p <= 0 ? "Free" : pounds(p));
 const walkMin = (m) => Math.max(1, Math.round(m / 80)); // ~80 m/min walking
+// Minutes → "Xh Ym" once it's an hour or more.
+function fmtMin(min) {
+  min = Math.round(min);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
 
 $("#locBtn").onclick = () => {
   if (!navigator.geolocation) return status("No geolocation", false);
@@ -222,6 +234,17 @@ $("#whenSeg")
     };
   });
 
+// Pub-on-route brand filter: "" | "jubel" | "guinness".
+let pubBrand = "";
+$("#pubSeg")
+  .querySelectorAll("button")
+  .forEach((b) => {
+    b.onclick = () => {
+      pubBrand = b.dataset.pub;
+      $("#pubSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    };
+  });
+
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
 
@@ -254,26 +277,34 @@ function resolve(input) {
 }
 
 // Nearest real (named) pub to a point, with its address for a precise Maps link.
+// Nearest pub within a 15-min walk (~1200 m) of the boarding station.
 async function findPub(lat, lon) {
-  const q = `[out:json][timeout:10];node(around:650,${lat},${lon})[amenity=pub][name];out 15;`;
+  const q = `[out:json][timeout:10];node(around:1200,${lat},${lon})[amenity=pub][name];out 30;`;
+  const ctrl = new AbortController();
+  const t0 = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: q });
+    const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: q, signal: ctrl.signal });
     const j = await r.json();
     const pubs = (j.elements || []).filter((e) => e.tags?.name);
     if (!pubs.length) return null;
-    const d2 = (e) => (e.lat - lat) ** 2 + (e.lon - lon) ** 2;
-    const best = pubs.sort((a, b) => d2(a) - d2(b))[0];
-    const t = best.tags;
+    const metres = (e) => {
+      const dy = (e.lat - lat) * 111000;
+      const dx = (e.lon - lon) * 111000 * Math.cos((lat * Math.PI) / 180);
+      return Math.hypot(dx, dy);
+    };
+    const best = pubs.map((e) => ({ e, d: metres(e) })).sort((a, b) => a.d - b.d)[0];
+    const e = best.e, t = e.tags;
     const addr = [t["addr:housenumber"], t["addr:street"], t["addr:postcode"]].filter(Boolean).join(" ");
-    // Only drinks the pub actually lists in OSM (brand/brewery/drink:* tags).
     const drinks = [];
     for (const k of ["brand", "brewery", "drink:beer", "drink:cider"]) {
       const v = t[k];
       if (v && v !== "yes") drinks.push(...v.split(";").map((s) => s.trim()));
     }
-    return { name: t.name, lat: best.lat, lon: best.lon, addr, drinks };
+    return { name: t.name, lat: e.lat, lon: e.lon, addr, drinks, metres: Math.round(best.d) };
   } catch {
     return null;
+  } finally {
+    clearTimeout(t0);
   }
 }
 
@@ -355,17 +386,19 @@ function cleanPlatform(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 function legChip(leg) {
   const n = Math.round(leg.durationMin);
   if (leg.mode === "cycle")
-    return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${n} Minute Bike</span>`;
+    return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${fmtMin(n)} Bike</span>`;
   if (leg.mode === "walking")
-    return `<span class="leg walking"><span class="ic">🚶</span>${leg.km ? `${leg.km} km Walk` : `${n} Minute Walk`}</span>`;
+    return `<span class="leg walking"><span class="ic">🚶</span>${leg.km ? `${leg.km} km Walk` : `${fmtMin(n)} Walk`}</span>`;
   if (leg.mode === "car") {
     const badge = leg.brand
       ? `<img class="pill-logo" src="${favicon(BRAND_LOGOS[leg.brand])}" alt="" onerror="this.replaceWith(document.createTextNode('🚗'))">`
       : '<span class="ic">🚗</span>';
-    return `<span class="leg car">${badge}${n} Minute Ride</span>`;
+    // Brand name on the pill (no repeated minutes); plain ride otherwise.
+    return `<span class="leg car">${badge}${leg.brand ? cap(leg.brand) : `${fmtMin(n)} Ride`}</span>`;
   }
   const color = lineColor(leg);
   const emoji =
@@ -380,27 +413,32 @@ function stepDetail(leg) {
   let ic, main, sub, extra = "";
   if (leg.mode === "cycle") {
     ic = "🍋‍🟩";
-    main = `${n} Minute Bike`;
+    main = `${fmtMin(n)} Bike`;
     sub = cleanName(leg.summary || (leg.to ? `to ${leg.to}` : ""));
   } else if (leg.mode === "walking") {
     ic = "🚶";
-    main = `${n} Minute Walk`;
-    // Concise + descriptive: "To <place>" (first part of the name), max 5 words.
-    sub = leg.to ? `To ${cleanName(leg.to).split(",")[0]}` : cleanName(leg.summary || "").split(",")[0];
+    main = leg.toDest ? `Walk to ${cleanName(leg.to).split(",")[0]}` : `${fmtMin(n)} Walk`;
+    sub = leg.toDest ? "" : leg.to ? `To ${cleanName(leg.to).split(",")[0]}` : cleanName(leg.summary || "").split(",")[0];
     sub = sub.split(" ").slice(0, 5).join(" ");
   } else if (leg.mode === "car") {
     ic = "🚗";
-    main = `${n} Minute Ride`;
+    main = leg.brand ? `${cap(leg.brand)} ride · ${fmtMin(n)}` : `${fmtMin(n)} Ride`;
     sub = leg.summary || "";
   } else {
     ic = leg.mode === "bus" ? "🚌" : "🚆";
-    main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${n} min` : ""}`;
+    main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${fmtMin(n)}` : ""}`;
     sub = leg.from && leg.to ? `${cleanName(leg.from)} → ${cleanName(leg.to)}` : cleanName(leg.summary || "");
-    extra = cleanPlatform(leg.platform || leg.direction);
+    extra = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : cleanPlatform(leg.platform || leg.direction);
   }
   const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
   const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
-  const link = mapsLink(leg);
+  // Trains: link out to Trainline to buy a ticket (no map needed on a train).
+  // Everything else: open Google Maps directions for that leg.
+  const isTrain = leg.mode === "national-rail" || leg.mode === "train";
+  const link = isTrain ? trainlineLink(leg) : mapsLink(leg);
+  const linkIc = isTrain
+    ? `<img class="step-ic-img" src="${favicon("thetrainline.com")}" alt="" onerror="this.replaceWith(document.createTextNode('🎫'))">`
+    : `<img class="step-ic-img" src="${favicon("google.com/maps")}" alt="" onerror="this.replaceWith(document.createTextNode('🗺️'))">`;
   return `<li class="step">
     <span class="step-ic"${style}>${ic}</span>
     <div class="step-body">
@@ -408,7 +446,7 @@ function stepDetail(leg) {
       ${sub ? `<div class="step-sub">${sub}</div>` : ""}
       ${extra ? `<div class="step-plat">${extra}</div>` : ""}
     </div>
-    ${link ? `<a class="step-map" href="${link}" target="_blank" rel="noopener" aria-label="Open in Google Maps">↗</a>` : ""}
+    ${link ? `<a class="step-map" href="${link}" target="_blank" rel="noopener" aria-label="Open">${linkIc}</a>` : ""}
   </li>`;
 }
 
@@ -465,20 +503,39 @@ function setTab(sort) {
   }
 }
 
+function readDiscounts() {
+  const on = new Set([...document.querySelectorAll("#discounts input:checked")].map((i) => i.closest("label").dataset.disc));
+  return { railcard: on.has("railcard"), uberOne: on.has("uberone") };
+}
+// What a route actually costs to show, after discounts. Returns {pence, prefix, railHint}.
+function priceOf(o) {
+  const d = readDiscounts();
+  const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
+  const trainy = hasTrain(o.legs);
+  let pence = o.costPence;
+  if (d.uberOne && o.brand === "uber") pence = Math.round(pence * 0.9); // Uber One ≈ member saving
+  let railHint = "";
+  if (trainy && !o.synthetic) {
+    if (d.railcard) { pence = railcardPence(pence); railHint = `<small class="rail">railcard ✓</small>`; }
+    else railHint = `<small class="rail">${money(railcardPence(o.costPence))} w/ railcard</small>`;
+  }
+  return { pence, prefix: isCab ? "&lt;" : "", railHint }; // "<" = estimated, up-to fare
+}
+
 // Time/price block reused by the list cards and the single-route page.
-function summaryHTML(o, data) {
-  const timeBlock = `<div class="time">${o.durationMin}<small> min</small></div>`;
-  const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
-  // Cabs split between travellers: show per-person big, total underneath.
-  let priceMain = money(o.costPence);
+function summaryHTML(o) {
+  const timeBlock = `<div class="time">${fmtMin(o.durationMin)}</div>`;
+  const { pence, prefix, railHint } = priceOf(o);
+  // Cabs split between travellers: per-person big, total underneath.
+  let priceMain = prefix + money(pence);
   let priceSub = "";
   if (o.brand && peopleCount > 1) {
-    priceMain = money(Math.round(o.costPence / peopleCount));
-    priceSub = `${money(o.costPence)} total`;
+    priceMain = prefix + money(Math.round(pence / peopleCount));
+    priceSub = `${prefix}${money(pence)} total`;
   }
   // Pub icon (no name) appears in the summary; the name shows on the route page.
   const legChips = o.legs.map(legChip);
-  if ($("#pubStop").checked && !o.synthetic) {
+  if (pubBrand && !o.synthetic) {
     let idx = o.legs.findIndex((l) => BOARD_MODES.includes(l.mode));
     legChips.splice(idx < 0 ? legChips.length : idx, 0, '<span class="leg pub"><span class="ic">🍺</span></span>');
   }
@@ -486,7 +543,7 @@ function summaryHTML(o, data) {
   return `
     <div class="top">
       <div class="timewrap">${timeBlock}</div>
-      <div class="price">${priceMain}${priceSub ? `<small>${priceSub}</small>` : ""}${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
+      <div class="price">${priceMain}${priceSub ? `<small>${priceSub}</small>` : ""}${railHint}</div>
     </div>
     <div class="legs">${legs}</div>`;
 }
@@ -510,16 +567,18 @@ function renderResults() {
 
   opts.forEach((o, i) => {
     const card = document.createElement("div");
-    card.className = "card" + (o.brand ? " card-app" : "");
+    card.className = "card";
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
-    // Cards that open an app (Uber/Bolt) get an "opens app" cue on the right.
-    const appCue = o.brand
-      ? `<span class="app-cue"><img class="app-logo" src="${favicon(BRAND_LOGOS[o.brand])}" alt="" onerror="this.replaceWith(document.createTextNode('🚗'))"><span class="app-arrow">↗</span></span>`
-      : "";
-    card.innerHTML = `<div class="card-head">${badge}${appCue}${summaryHTML(o, data)}</div>`;
-    card.querySelector(".card-head").onclick = o.brand
+    // Diagonal-arrow opener (bottom-left): Uber/Bolt cabs, or Lime for bike routes.
+    const appBrand = o.brand || (o.legs.some((l) => l.mode === "cycle") ? "lime" : "");
+    const appOpen = appBrand ? `<a class="app-open" data-app="${appBrand}">↗ Open ${cap(appBrand)}</a>` : "";
+    card.innerHTML = `<div class="card-head">${badge}${summaryHTML(o)}${appOpen}</div>`;
+    const head = card.querySelector(".card-head");
+    head.onclick = o.brand
       ? () => window.open(rideLink(o.brand), "_blank", "noopener")
       : () => openDetail(o);
+    const a = card.querySelector(".app-open");
+    if (a) a.onclick = (e) => { e.stopPropagation(); window.open(appLink(a.dataset.app), "_blank", "noopener"); };
     wrap.appendChild(card);
   });
 
@@ -542,30 +601,28 @@ function rideLink(brand) {
   // Bolt has no public coordinate deep-link; pass coords best-effort, open app.
   return `https://bolt.eu/?pickup_lat=${O.lat}&pickup_lng=${O.lon}&destination_lat=${D.lat}&destination_lng=${D.lon}`;
 }
-
-// A start/end point row, linking to that place on Google Maps.
-function endpointStep(kind, pt) {
-  const ic = kind === "start" ? "🟢" : "🏁";
-  const label = kind === "start" ? "Start" : "End";
-  const q = pointQuery(pt);
-  const link = q ? `https://www.google.com/maps/search/?api=1&query=${q}` : null;
-  return `<li class="step">
-    <span class="step-ic">${ic}</span>
-    <div class="step-body"><div class="step-main">${label}</div><div class="step-sub">${cleanName(pt.name || "")}</div></div>
-    ${link ? `<a class="step-map" href="${link}" target="_blank" rel="noopener" aria-label="Open in Google Maps">↗</a>` : ""}
-  </li>`;
+const LIME_LINK = "https://www.li.me/";
+const appLink = (brand) => (brand === "lime" ? LIME_LINK : rideLink(brand));
+// Trainline: buy a ticket for a National Rail leg (no map needed on a train).
+const slug = (s) => cleanName(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+function trainlineLink(leg) {
+  if (!leg.from || !leg.to) return "https://www.thetrainline.com/";
+  return `https://www.thetrainline.com/train-times/${slug(leg.from)}-to-${slug(leg.to)}`;
 }
 
 // Open the single-route page: own screen, map at top (scrolls), steps below.
 function openDetail(o) {
   const data = lastResult;
-  const pubOn = $("#pubStop").checked && !o.synthetic;
+  const pubOn = !!pubBrand && !o.synthetic;
 
-  // Anchor the journey to the entered start/end (so links use those, by name).
+  // Anchor to the entered start/end (links use those names). The final leg
+  // becomes "Walk to <end>" so we don't need a separate Start/End row.
   const legs = o.legs.map((l) => ({ ...l }));
   if (legs.length) {
     legs[0] = { ...legs[0], from: data.origin.name, fromLL: data.origin };
-    legs[legs.length - 1] = { ...legs[legs.length - 1], to: data.dest.name, toLL: data.dest };
+    const last = { ...legs[legs.length - 1], to: data.dest.name, toLL: data.dest };
+    if (last.mode === "walking") last.toDest = true;
+    legs[legs.length - 1] = last;
   }
 
   const legSteps = legs.map(stepDetail);
@@ -576,8 +633,9 @@ function openDetail(o) {
   }
 
   $("#detailContent").innerHTML = `
-    <div class="d-head">${summaryHTML(o, data)}</div>
-    <ol class="steps">${endpointStep("start", data.origin)}${legSteps.join("")}${endpointStep("end", data.dest)}</ol>`;
+    <div class="d-head">${summaryHTML(o)}</div>
+    <ol class="steps">${legSteps.join("")}</ol>
+    ${priceBreakdown(o)}`;
   $("#detail").classList.remove("hidden");
   document.body.classList.add("detail-open");
   $("#detail").scrollTop = 0;
@@ -588,42 +646,69 @@ function openDetail(o) {
   if (pubOn) loadPub(o);
 }
 
+// AI-style price breakdown shown under the route steps.
+function priceBreakdown(o) {
+  const { pence, prefix } = priceOf(o);
+  const lines = [];
+  const bike = o.legs.find((l) => l.mode === "cycle");
+  if (bike) {
+    const m = Math.round(bike.durationMin);
+    const payg = Math.round((100 + 29 * m) ); // £1 unlock + 29p/min, in pence
+    const passes = Math.max(1, Math.ceil(m / 30)) * 399;
+    lines.push(passes <= payg
+      ? `🍋‍🟩 Lime: a ${Math.max(1, Math.ceil(m / 30)) * 30}-min pass (${money(passes)}) beats pay-as-you-go (${money(payg)}) for ${m} min riding.`
+      : `🍋‍🟩 Lime: pay-as-you-go (${money(payg)}) is cheaper than a pass here.`);
+  }
+  if (hasTrain(o.legs)) lines.push(`🚆 Train fare estimated off-peak; a railcard saves ~⅓ (toggle in Custom).`);
+  if (o.brand || o.legs.some((l) => l.mode === "car")) lines.push(`🚗 Cab fare is an upper estimate (shown as “&lt;”); the app charges the live metered price.`);
+  if (o.legs.some((l) => RAIL_MODES.includes(l.mode) && l.mode !== "national-rail" && l.mode !== "train")) lines.push(`🚇 Tube/Overground fare is a zone-based estimate.`);
+  if (!lines.length) return "";
+  return `<div class="ai-note"><b>✨ How we worked out ${prefix}${money(pence)}</b><br>${lines.join("<br>")}</div>`;
+}
+
 function closeDetail() {
   $("#detail").classList.add("hidden");
   document.body.classList.remove("detail-open");
 }
 
-// Look up a real pub near where this route boards, then drop it into its step.
+// Official brand pub-finders to link out to.
+const PUB_FINDERS = {
+  jubel: { name: "Jubel", url: "https://jubel.co/", emoji: "🍋" },
+  guinness: { name: "Guinness", url: "https://www.guinness.com/en-gb/pub-finder", emoji: "🖤" },
+};
+
+// Pub within a 15-min walk of where this route boards; drop it into its step + map.
 async function loadPub(o) {
   const step = $("#detailContent .pub-step");
   if (!step) return;
   const O = lastResult.origin, D = lastResult.dest;
-  const pt = o.dropoffBay || { lat: (O.lat + D.lat) / 2, lon: (O.lon + D.lon) / 2 };
-  if (!o._pub) o._pub = (await findPub(pt.lat, pt.lon)) || { name: null };
+  const board =
+    o.dropoffBay ||
+    (o.legs.find((l) => BOARD_MODES.includes(l.mode)) || {}).fromLL ||
+    { lat: (O.lat + D.lat) / 2, lon: (O.lon + D.lon) / 2 };
+  if (!o._pub) o._pub = (await findPub(board.lat, board.lon)) || { name: null };
   const body = step.querySelector(".step-body");
   const pub = o._pub;
-  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No Pub on Route</div>');
-  // Only drinks the pub genuinely lists (and that we have a logo for). If we're
-  // unsure, show nothing — accuracy over decoration.
+  const f = PUB_FINDERS[pubBrand] || PUB_FINDERS.guinness;
+  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No pub within a 15-min walk</div>');
+  emojiMarker(pub.lat, pub.lon, "🍺", pub.name).addTo(layers); // show on the map
   const seen = new Set();
   const drinks = [];
   for (const d of pub.drinks || []) {
     const m = drinkMatch(d);
-    if (m && !seen.has(m.name)) {
-      seen.add(m.name);
-      drinks.push(m);
-    }
+    if (m && !seen.has(m.name)) { seen.add(m.name); drinks.push(m); }
   }
   const beers = drinks
     .slice(0, 8)
     .map((m) => `<li><img class="beer-logo" src="${favicon(m.domain)}" alt=""> ${m.name}</li>`)
     .join("");
-  // Include the address so Google lands on the pub's place page, not a list.
   const query = encodeURIComponent([pub.name, pub.addr].filter(Boolean).join(", "));
   const gmaps = `https://www.google.com/maps/search/?api=1&query=${query}`;
   body.innerHTML = `
     <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
-    ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}`;
+    <div class="step-sub">${walkMin(pub.metres || 0)} min walk from the station</div>
+    ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}
+    <a class="pub-find" href="${f.url}" target="_blank" rel="noopener">${f.emoji} Find ${f.name} pubs ↗</a>`;
 }
 
 // Tabs: Fastest / Cheapest re-rank the list; Custom shows the controls.
@@ -650,8 +735,10 @@ function resetApp() {
   $("#tabs").classList.add("hidden");
   document.body.classList.remove("has-results");
   closeDetail();
-  $("#pubStop").checked = false;
+  pubBrand = "";
+  $("#pubSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.pub === ""));
   $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
+  $("#discounts").querySelectorAll("input").forEach((i) => (i.checked = false));
   peopleCount = 1;
   $("#peopleSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.n === "1"));
   whenMode = "now";
@@ -663,6 +750,31 @@ function resetApp() {
   $("#go").textContent = "Find Best and Cheapest Routes";
 }
 $("#homeLink").onclick = resetApp;
+
+// Changelog (tap the version pill). Concise, plain-English summaries.
+const CHANGELOG = [
+  ["0.26", [
+    "Pub stops now find pubs serving Jubel or Guinness within a 15-min walk, shown on the map, with a link to the brand's pub finder.",
+    "Custom tab tidied: section titles, Travellers 1–6, a Discounts section (Railcard, Uber One), and Avoid chips that turn into a red ✕.",
+    "Smarter prices: railcard saving on trains, an upper “<” estimate for cabs, and an AI breakdown of how each fare was worked out.",
+    "Times now show as hours and minutes over an hour.",
+    "Route page: trains link to Trainline, other legs to Google Maps; clearer terminus labels; Start row removed and the final leg reads “Walk to …”.",
+    "Open Uber/Bolt/Lime straight from a card with a ↗.",
+    "Reset-map button moved to the bottom-right and hides after use.",
+  ]],
+  ["0.25", ["Fixed a bug where the loading screen could get stuck."]],
+  ["0.24", ["Added departure/arrival times, mode filters, and a single-route page with the map up top."]],
+  ["Earlier", ["Fastest/Cheapest tabs, e-bike + cab-to-station routing, live fares, and the bottom search bar."]],
+];
+function openChangelog() {
+  $("#changelogBody").innerHTML = CHANGELOG.map(([v, items]) =>
+    `<div class="cl-ver">v${v}</div><ul class="cl-list">${items.map((i) => `<li>${i}</li>`).join("")}</ul>`
+  ).join("");
+  $("#changelog").classList.remove("hidden");
+}
+$("#verPill").onclick = openChangelog;
+$("#changelogClose").onclick = () => $("#changelog").classList.add("hidden");
+$("#changelog").onclick = (e) => { if (e.target.id === "changelog") $("#changelog").classList.add("hidden"); };
 
 // Location typeahead: debounced suggestions, tap to fill (with exact coords).
 function attachAutocomplete(input, box) {
@@ -748,6 +860,7 @@ function drawRoute(data, o) {
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
   L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);
   lastRoutePts = pts;
+  if (resetBtn) resetBtn.style.display = ""; // show again for this route
   map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
 
