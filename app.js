@@ -195,11 +195,7 @@ $("#locBtn").onclick = () => {
 $("#go").onclick = plan;
 $("#to").addEventListener("keydown", (e) => e.key === "Enter" && plan());
 
-const replanIfReady = () => {
-  if ($("#from").value.trim() && $("#to").value.trim() && lastResult) plan();
-};
-
-// Party size (1–4 buttons) only affects the fare split — re-render, no re-plan.
+// Custom controls only change state — nothing re-runs until you tap Update.
 let peopleCount = 1;
 $("#peopleSeg")
   .querySelectorAll("button")
@@ -207,11 +203,9 @@ $("#peopleSeg")
     b.onclick = () => {
       peopleCount = +b.dataset.n;
       $("#peopleSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
-      if (lastResult) render(lastResult);
     };
   });
 
-// Extras: pub stop, departure/arrival time, and modes to avoid.
 let whenMode = "now"; // "now" | "depart" | "arrive"
 $("#whenSeg")
   .querySelectorAll("button")
@@ -224,17 +218,13 @@ $("#whenSeg")
         const d = new Date(Date.now() + 5 * 60000); // default ~now
         $("#whenTime").value = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
       }
-      replanIfReady();
     };
   });
-$("#whenTime").addEventListener("change", replanIfReady);
-$("#pubStop").addEventListener("change", replanIfReady);
-$("#avoid").addEventListener("change", replanIfReady);
 
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
 
-// Build engine options from the Extras controls.
+// Build engine options from the Custom controls.
 function extrasOpts() {
   const avoid = avoidedModes();
   const TRANSIT = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram", "bus", "walking"];
@@ -449,7 +439,22 @@ function render(data) {
   const byCost = [...movers].sort((a, b) => a.costPence - b.costPence);
   $("#tabFastest").textContent = byTime[0] ? `${byTime[0].durationMin} min` : "";
   $("#tabCheapest").textContent = byCost[0] ? money(byCost[0].costPence) : "";
-  renderResults();
+  // After an Update, drop the Custom view and show the freshly ranked results.
+  if (sortBy === "custom") sortBy = "fastest";
+  setTab(sortBy);
+}
+
+// Switch between the Fastest/Cheapest result lists and the Custom controls.
+function setTab(sort) {
+  sortBy = sort;
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.sort === sort));
+  const custom = sort === "custom";
+  $("#custom").classList.toggle("hidden", !custom);
+  $("#results").classList.toggle("hidden", custom);
+  if (!custom) {
+    renderResults();
+    $("#results").scrollTop = 0;
+  }
 }
 
 // Time/price block reused by the list cards and the single-route page.
@@ -603,13 +608,9 @@ async function loadPub(o) {
     ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}`;
 }
 
-// Sort tabs (Skyscanner-style): re-rank the same routes by time or cost.
+// Tabs: Fastest / Cheapest re-rank the list; Custom shows the controls.
 document.querySelectorAll(".tab").forEach((tab) => {
-  tab.onclick = () => {
-    sortBy = tab.dataset.sort;
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-    renderResults();
-  };
+  tab.onclick = () => setTab(tab.dataset.sort);
 });
 
 $("#backBtn").onclick = closeDetail;
@@ -625,11 +626,12 @@ function resetApp() {
   $("#acFrom").classList.add("hidden");
   $("#acTo").classList.add("hidden");
   $("#results").innerHTML = "";
+  $("#results").classList.remove("hidden");
+  $("#custom").classList.add("hidden");
   lastResult = null;
   $("#tabs").classList.add("hidden");
   document.body.classList.remove("has-results");
   closeDetail();
-  $("#extras").open = false;
   $("#pubStop").checked = false;
   $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
   peopleCount = 1;
@@ -642,7 +644,7 @@ function resetApp() {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.sort === "fastest"));
   $("#go").textContent = "Find Best and Cheapest Routes";
 }
-$("#homeBtn").onclick = resetApp;
+$("#homeLink").onclick = resetApp;
 
 // Location typeahead: debounced suggestions, tap to fill (with exact coords).
 function attachAutocomplete(input, box) {

@@ -15,7 +15,12 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <button id="homeBtn" class="homebtn" aria-label="New search" title="New search">🏠</button>
+  <header class="apphead">
+    <button id="homeLink" class="brand" aria-label="Quickest — new search">
+      <img src="icon.svg" class="brand-logo-img" alt="" />
+      <span>Quickest</span>
+    </button>
+  </header>
 
   <section class="panel">
     <div id="splash" class="splash">
@@ -37,10 +42,14 @@
         <span class="tab-k">Cheapest</span>
         <span class="tab-v" id="tabCheapest"></span>
       </button>
+      <button class="tab" data-sort="custom" role="tab">
+        <span class="tab-k">Custom</span>
+        <span class="tab-v">⚙️</span>
+      </button>
     </div>
 
-    <details class="extras" id="extras">
-      <summary>Extras</summary>
+    <!-- Custom tab: tweak options here, then hit Update -->
+    <div id="custom" class="custom hidden">
       <div class="ex-line between">
         <span>👥 Travellers</span>
         <div class="seg" id="peopleSeg">
@@ -73,7 +82,8 @@
           <label><input type="checkbox" data-mode="cab" />🚗 Cabs</label>
         </div>
       </div>
-    </details>
+      <p class="custom-hint">Tap <b>Update</b> to apply.</p>
+    </div>
 
     <section id="results" class="results" aria-live="polite"></section>
   </section>

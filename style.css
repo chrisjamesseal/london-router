@@ -177,18 +177,8 @@ body {
 .ac-item:last-child { border-bottom: 0; }
 .ac-item:active, .ac-item:hover { background: var(--bg); }
 
-/* extras dropdown */
-/* Extras live below the tabs on the results page; hidden on the splash. */
-.extras { display: none; border: 1.5px solid var(--line); border-radius: 13px; padding: 2px 12px; margin: 8px 12px 2px; background: var(--card); }
-body.has-results #extras { display: block; }
-.extras[open] { padding-bottom: 12px; }
+/* Custom controls (travellers, pub, when, avoid) */
 .ex-line.between { justify-content: space-between; cursor: default; }
-.extras summary {
-  list-style: none; cursor: pointer; padding: 11px 0; font-weight: 700; font-size: 14px;
-}
-.extras summary::-webkit-details-marker { display: none; }
-.extras summary::before { content: "＋ "; color: var(--brand); font-weight: 800; }
-.extras[open] summary::before { content: "− "; }
 .ex-line { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 14px; font-weight: 600; cursor: pointer; }
 .ex-line.col { flex-direction: column; align-items: stretch; gap: 8px; cursor: default; }
 .ex-line input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); flex: 0 0 auto; }
@@ -204,17 +194,23 @@ body.has-results #extras { display: block; }
 body.has-results .bar { padding-top: 9px; }
 body.has-results .inputs { gap: 7px; }
 body.has-results .field input { padding: 11px 4px; }
-body.has-results .ac { display: none; } /* never overlap the results list */
-body.has-results .tabs { padding-left: 58px; } /* room for the home button */
 
-/* home / reset button (top-left, results page only) */
-.homebtn {
-  display: none; position: fixed; z-index: 850;
-  top: calc(10px + env(safe-area-inset-top)); left: 12px;
-  width: 40px; height: 40px; border: 0; border-radius: 50%;
-  background: var(--card); box-shadow: var(--shadow); font-size: 18px; cursor: pointer;
+/* slim app header with the logo, links back to home */
+.apphead {
+  flex: 0 0 auto; display: flex; align-items: center;
+  padding: max(6px, env(safe-area-inset-top)) 14px 6px;
+  background: var(--card); border-bottom: 1px solid var(--line);
 }
-body.has-results .homebtn { display: grid; place-items: center; }
+.brand {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 0; background: transparent; cursor: pointer; font-family: inherit;
+  font-size: 17px; font-weight: 800; color: var(--ink); letter-spacing: -.01em; padding: 2px;
+}
+.brand-logo-img { width: 26px; height: 26px; border-radius: 7px; }
+
+/* Custom tab panel */
+.custom { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.custom-hint { margin: 8px 2px 2px; font-size: 12.5px; color: var(--muted); }
 .smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
 
 /* splash (first screen, before any search) — sits lower, fits one screen */
