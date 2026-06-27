@@ -203,13 +203,39 @@ body {
 .stepper button:active { background: var(--bg); }
 #peopleVal { min-width: 16px; text-align: center; font-weight: 800; font-size: 16px; }
 
-/* Once results are on screen, free up vertical space for the list. The Extras
-   stay available (collapsed) so they can be edited after a search. */
+/* Once results are on screen, free up vertical space for the list. */
 body.has-results .bar { padding-top: 9px; }
 body.has-results .inputs { gap: 7px; }
 body.has-results .field input { padding: 11px 4px; }
 body.has-results .ac { display: none; } /* never overlap the results list */
 .smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
+
+/* splash (first screen, before any search) */
+.splash {
+  flex: 1 1 auto; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px 22px; gap: 4px;
+}
+body.has-results .splash { display: none; }
+.splash-logo { width: 74px; height: 74px; border-radius: 18px; box-shadow: var(--shadow); }
+.splash-title { margin: 12px 0 0; font-size: 27px; font-weight: 800; letter-spacing: -.02em; }
+.splash-sub { margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+.splash-feats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-width: 330px; width: 100%; }
+.splash-feats li {
+  background: var(--card); border-radius: 13px; box-shadow: var(--shadow);
+  padding: 12px 14px; font-size: 13.5px; font-weight: 600; text-align: left; line-height: 1.35;
+}
+
+/* inline pub-stop + people controls (always visible above Find Route) */
+.opts { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.opt { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; }
+.opt input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); flex: 0 0 auto; }
+.seg { display: flex; gap: 3px; }
+.seg button {
+  width: 28px; height: 28px; border-radius: 8px; border: 1.5px solid var(--line);
+  background: var(--card); color: var(--ink); font-family: inherit; font-weight: 700; font-size: 13px; cursor: pointer;
+}
+.seg button.on { background: var(--brand); color: #fff; border-color: var(--brand); }
 
 .field:focus-within { border-color: var(--brand); }
 .field input {

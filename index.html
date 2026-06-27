@@ -16,6 +16,16 @@
 </head>
 <body>
   <section class="panel">
+    <div id="splash" class="splash">
+      <img src="icon.svg" class="splash-logo" alt="" />
+      <h1 class="splash-title">Quickest</h1>
+      <p class="splash-sub">London, the quickest way.</p>
+      <ul class="splash-feats">
+        <li>🏁 Races e-bike, tube, train &amp; bus to find the quickest route</li>
+        <li>💷 Compare Fastest vs Cheapest, with railcard fares</li>
+        <li>🚗 Uber &amp; Bolt estimates · 🍺 add a pub stop en route</li>
+      </ul>
+    </div>
     <div id="tabs" class="tabs hidden" role="tablist">
       <button class="tab active" data-sort="fastest" role="tab">
         <span class="tab-k">Fastest</span>
@@ -60,29 +70,22 @@
         <button class="clear" data-for="to" type="button" aria-label="Clear">✕</button>
         <div id="acTo" class="ac hidden"></div>
       </div>
-      <details class="extras">
-        <summary>＋ Extras <span class="ex-hint">Optional</span></summary>
-        <label class="ex-row check">
+      <div class="opts">
+        <label class="opt">
           <input type="checkbox" id="pubStop" />
-          <span>🍺 Add a Pub Stop Halfway</span>
+          <span>🍺 Pub Stop</span>
         </label>
-        <div class="ex-row">
-          <span>👥 Travelling Together</span>
-          <div class="stepper">
-            <button type="button" id="peopleMinus" aria-label="Fewer people">−</button>
-            <span id="peopleVal">1</span>
-            <button type="button" id="peoplePlus" aria-label="More people">+</button>
+        <div class="opt">
+          <span>👥 People</span>
+          <div class="seg" id="peopleSeg">
+            <button type="button" data-n="1" class="on">1</button>
+            <button type="button" data-n="2">2</button>
+            <button type="button" data-n="3">3</button>
+            <button type="button" data-n="4">4</button>
           </div>
         </div>
-      </details>
-      <div class="row">
-        <label class="toggle">
-          <input type="checkbox" id="return" />
-          <span class="track"></span>
-          <span class="lbl">↔ Return Journey</span>
-        </label>
-        <button id="go" class="go">Find Route</button>
       </div>
+      <button id="go" class="go">Find Route</button>
     </div>
   </header>
 

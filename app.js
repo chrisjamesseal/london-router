@@ -168,21 +168,21 @@ $("#locBtn").onclick = () => {
 
 $("#go").onclick = plan;
 $("#to").addEventListener("keydown", (e) => e.key === "Enter" && plan());
-// Re-plan when the return toggle or pub stop changes, if we already planned.
-const replanIfReady = () => {
+// Re-plan when the pub stop changes, if we already have a journey.
+$("#pubStop").addEventListener("change", () => {
   if ($("#from").value.trim() && $("#to").value.trim() && lastResult) plan();
-};
-$("#return").addEventListener("change", replanIfReady);
-$("#pubStop").addEventListener("change", replanIfReady);
-// Party size (+/- stepper) only affects the fare split — re-render, no re-plan.
+});
+// Party size (1–4 buttons) only affects the fare split — re-render, no re-plan.
 let peopleCount = 1;
-function setPeople(n) {
-  peopleCount = Math.max(1, n);
-  $("#peopleVal").textContent = peopleCount;
-  if (lastResult) render(lastResult);
-}
-$("#peopleMinus").onclick = () => setPeople(peopleCount - 1);
-$("#peoplePlus").onclick = () => setPeople(peopleCount + 1);
+$("#peopleSeg")
+  .querySelectorAll("button")
+  .forEach((b) => {
+    b.onclick = () => {
+      peopleCount = +b.dataset.n;
+      $("#peopleSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+      if (lastResult) render(lastResult);
+    };
+  });
 
 // Use a typeahead pick's exact coords if the user chose one; else geocode text.
 function resolve(input) {
@@ -241,10 +241,7 @@ async function plan() {
     ]);
     if (!origin) throw new Error(`Couldn't find "${originStr}"`);
     if (!dest) throw new Error(`Couldn't find "${destStr}"`);
-    const data = await runPlan(origin, dest, bays, {
-      returnTrip: $("#return").checked,
-      stations,
-    });
+    const data = await runPlan(origin, dest, bays, { stations });
     if (!data.options.length) throw new Error("No routes found");
     lastResult = data;
     render(data);
@@ -323,7 +320,9 @@ function stepDetail(leg) {
   } else if (leg.mode === "walking") {
     ic = "🚶";
     main = `${n} Minute Walk`;
-    sub = cleanName(leg.summary || (leg.to ? `to ${leg.to}` : ""));
+    // Concise + descriptive: "To <place>" (first part of the name), max 5 words.
+    sub = leg.to ? `To ${cleanName(leg.to).split(",")[0]}` : cleanName(leg.summary || "").split(",")[0];
+    sub = sub.split(" ").slice(0, 5).join(" ");
   } else if (leg.mode === "car") {
     ic = "🚗";
     main = `${n} Minute Ride`;
@@ -361,18 +360,13 @@ function estimates(data) {
   const car = (label, brand, costPence) => {
     const o = { label, brand, costPence, durationMin: driveMin, synthetic: true,
       legs: [{ mode: "car", durationMin: driveMin, brand, fromLL: data.origin, toLL: data.dest }] };
-    if (data.roundTrip) {
-      o.thereMin = driveMin; o.backMin = driveMin;
-      o.durationMin = driveMin * 2; o.costPence = costPence * 2;
-    }
-    o.priceSub = people > 1 ? `${money(Math.round(o.costPence / people))} each` : "Tap Extras to Split";
+    o.priceSub = people > 1 ? `${money(Math.round(o.costPence / people))} each` : "Split between you?";
     return o;
   };
 
   const walk = { label: "Walk 🚶", costPence: 0, durationMin: walkTotal, synthetic: true,
     legs: [{ mode: "walking", durationMin: walkTotal, fromLL: data.origin, toLL: data.dest }],
     note: "Free — bring comfy shoes 🦵", priceSub: `${km.toFixed(1)} km` };
-  if (data.roundTrip) { walk.thereMin = walkTotal; walk.backMin = walkTotal; walk.durationMin = walkTotal * 2; }
 
   return { uber: car("Uber", "uber", uberP), bolt: car("Bolt", "bolt", boltP), walk };
 }
@@ -392,10 +386,7 @@ function render(data) {
 
 // Time/price block reused by the list cards and the single-route page.
 function summaryHTML(o, data) {
-  const timeBlock = data.roundTrip
-    ? `<div class="time">${o.thereMin}<small> min there</small></div>
-       <div class="backtime">↩ ${o.backMin} min back</div>`
-    : `<div class="time">${o.durationMin}<small> min</small></div>`;
+  const timeBlock = `<div class="time">${o.durationMin}<small> min</small></div>`;
   const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
   const priceSub = o.priceSub || `${o.walkMetres} m walk`;
   // Pub icon (no name) appears in the summary; the name shows on the route page.
