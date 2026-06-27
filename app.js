@@ -2,7 +2,7 @@
 // TfL and Nominatim directly (both allow CORS). No backend required.
 import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
-import { railcardPence } from "./lib/fares.js";
+import { railcardPence, bikePricing } from "./lib/fares.js";
 
 const $ = (s) => document.querySelector(s);
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
@@ -183,7 +183,7 @@ const walkMin = (m) => Math.max(1, Math.round(m / 80)); // ~80 m/min walking
 // Minutes → "Xh Ym" once it's an hour or more.
 function fmtMin(min) {
   min = Math.round(min);
-  if (min < 60) return `${min} min`;
+  if (min < 60) return `${min} Min`;
   const h = Math.floor(min / 60), m = min % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
 }
@@ -387,6 +387,17 @@ function cleanPlatform(s) {
 }
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+// Compass direction a rail leg travels, from the leg's start/end coords
+// ("Eastbound", "Westbound", "Northbound", "Southbound") — like the platforms.
+function compassBound(leg) {
+  const a = leg.fromLL, b = leg.toLL;
+  if (!a || !b || a.lat == null || b.lat == null) return "";
+  const dLat = b.lat - a.lat;
+  const dLon = (b.lon - a.lon) * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  if (Math.abs(dLat) >= Math.abs(dLon)) return dLat >= 0 ? "Northbound" : "Southbound";
+  return dLon >= 0 ? "Eastbound" : "Westbound";
+}
 function legChip(leg) {
   const n = Math.round(leg.durationMin);
   if (leg.mode === "cycle")
@@ -394,11 +405,11 @@ function legChip(leg) {
   if (leg.mode === "walking")
     return `<span class="leg walking"><span class="ic">🚶</span>${leg.km ? `${leg.km} km Walk` : `${fmtMin(n)} Walk`}</span>`;
   if (leg.mode === "car") {
-    const badge = leg.brand
-      ? `<img class="pill-logo" src="${favicon(BRAND_LOGOS[leg.brand])}" alt="" onerror="this.replaceWith(document.createTextNode('🚗'))">`
-      : '<span class="ic">🚗</span>';
-    // Brand name on the pill (no repeated minutes); plain ride otherwise.
-    return `<span class="leg car">${badge}${leg.brand ? cap(leg.brand) : `${fmtMin(n)} Ride`}</span>`;
+    if (leg.brand) {
+      const logo = `<img class="pill-logo" src="${favicon(BRAND_LOGOS[leg.brand])}" alt="" onerror="this.replaceWith(document.createTextNode('🚗'))">`;
+      return `<span class="leg car appbtn">${logo}${cap(leg.brand)} <span class="pill-arrow">↗</span></span>`;
+    }
+    return `<span class="leg car"><span class="ic">🚗</span>${fmtMin(n)} Ride</span>`;
   }
   const color = lineColor(leg);
   const emoji =
@@ -428,16 +439,22 @@ function stepDetail(leg) {
     ic = leg.mode === "bus" ? "🚌" : "🚆";
     main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${fmtMin(n)}` : ""}`;
     sub = leg.from && leg.to ? `${cleanName(leg.from)} → ${cleanName(leg.to)}` : cleanName(leg.summary || "");
-    extra = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : cleanPlatform(leg.platform || leg.direction);
+    // Rail legs: show the compass bound (Eastbound…) plus where it's heading.
+    const towards = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : cleanPlatform(leg.platform || leg.direction);
+    const bound = RAIL_MODES.includes(leg.mode) ? compassBound(leg) : "";
+    extra = [bound, towards].filter(Boolean).join(" · ");
   }
   const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
   const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
-  // Trains: link out to Trainline to buy a ticket (no map needed on a train).
-  // Everything else: open Google Maps directions for that leg.
+  // Trains → Trainline (buy a ticket); bike legs → open the Lime app; everything
+  // else → Google Maps directions for that leg.
   const isTrain = leg.mode === "national-rail" || leg.mode === "train";
-  const link = isTrain ? trainlineLink(leg) : mapsLink(leg);
+  const isBike = leg.mode === "cycle";
+  const link = isTrain ? trainlineLink(leg) : isBike ? LIME_LINK : mapsLink(leg);
   const linkIc = isTrain
     ? `<img class="step-ic-img" src="${favicon("thetrainline.com")}" alt="" onerror="this.replaceWith(document.createTextNode('🎫'))">`
+    : isBike
+    ? `<img class="step-ic-img" src="${favicon("li.me")}" alt="" onerror="this.replaceWith(document.createTextNode('🍋‍🟩'))">`
     : `<img class="step-ic-img" src="${favicon("google.com/maps")}" alt="" onerror="this.replaceWith(document.createTextNode('🗺️'))">`;
   return `<li class="step">
     <span class="step-ic"${style}>${ic}</span>
@@ -569,16 +586,13 @@ function renderResults() {
     const card = document.createElement("div");
     card.className = "card";
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
-    // Diagonal-arrow opener (bottom-left): Uber/Bolt cabs, or Lime for bike routes.
-    const appBrand = o.brand || (o.legs.some((l) => l.mode === "cycle") ? "lime" : "");
-    const appOpen = appBrand ? `<a class="app-open" data-app="${appBrand}">↗ Open ${cap(appBrand)}</a>` : "";
-    card.innerHTML = `<div class="card-head">${badge}${summaryHTML(o)}${appOpen}</div>`;
+    card.innerHTML = `<div class="card-head">${badge}${summaryHTML(o)}</div>`;
     const head = card.querySelector(".card-head");
+    // Cab cards open the ride app straight away (the pill is the button); every
+    // other route opens its single-route page.
     head.onclick = o.brand
       ? () => window.open(rideLink(o.brand), "_blank", "noopener")
       : () => openDetail(o);
-    const a = card.querySelector(".app-open");
-    if (a) a.onclick = (e) => { e.stopPropagation(); window.open(appLink(a.dataset.app), "_blank", "noopener"); };
     wrap.appendChild(card);
   });
 
@@ -598,16 +612,36 @@ function rideLink(brand) {
       `&dropoff[latitude]=${D.lat}&dropoff[longitude]=${D.lon}` +
       `&dropoff[nickname]=${encodeURIComponent(D.name || "Destination")}`;
   }
-  // Bolt has no public coordinate deep-link; pass coords best-effort, open app.
-  return `https://bolt.eu/?pickup_lat=${O.lat}&pickup_lng=${O.lon}&destination_lat=${D.lat}&destination_lng=${D.lon}`;
+  // Bolt universal link (no public coordinate deep-link) — opens the app/site.
+  return "https://bolt.eu/en-gb/";
 }
 const LIME_LINK = "https://www.li.me/";
-const appLink = (brand) => (brand === "lime" ? LIME_LINK : rideLink(brand));
 // Trainline: buy a ticket for a National Rail leg (no map needed on a train).
 const slug = (s) => cleanName(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 function trainlineLink(leg) {
   if (!leg.from || !leg.to) return "https://www.thetrainline.com/";
   return `https://www.thetrainline.com/train-times/${slug(leg.from)}-to-${slug(leg.to)}`;
+}
+
+// Collapse consecutive National Rail hops into one leg — you buy a single
+// through-ticket for the whole train journey (one Trainline link).
+function mergeTrainLegs(legs) {
+  const out = [];
+  for (const l of legs) {
+    const prev = out[out.length - 1];
+    if (prev && TRAIN_MODES.includes(prev.mode) && TRAIN_MODES.includes(l.mode)) {
+      out[out.length - 1] = {
+        ...prev,
+        to: l.to,
+        toLL: l.toLL,
+        durationMin: (prev.durationMin || 0) + (l.durationMin || 0),
+        line: prev.line && l.line && prev.line !== l.line ? `${prev.line} + ${l.line}` : prev.line || l.line,
+        terminus: l.terminus || prev.terminus,
+        summary: `${cleanName(prev.from)} → ${cleanName(l.to)}`,
+      };
+    } else out.push({ ...l });
+  }
+  return out;
 }
 
 // Open the single-route page: own screen, map at top (scrolls), steps below.
@@ -617,7 +651,8 @@ function openDetail(o) {
 
   // Anchor to the entered start/end (links use those names). The final leg
   // becomes "Walk to <end>" so we don't need a separate Start/End row.
-  const legs = o.legs.map((l) => ({ ...l }));
+  // Consecutive train hops collapse into one section (one ticket, one Trainline link).
+  const legs = mergeTrainLegs(o.legs.map((l) => ({ ...l })));
   if (legs.length) {
     legs[0] = { ...legs[0], from: data.origin.name, fromLL: data.origin };
     const last = { ...legs[legs.length - 1], to: data.dest.name, toLL: data.dest };
@@ -646,24 +681,47 @@ function openDetail(o) {
   if (pubOn) loadPub(o);
 }
 
-// AI-style price breakdown shown under the route steps.
+// AI-style price breakdown shown under the route steps. Each emoji works like a
+// bullet point: the text sits inline beside it with a hanging indent.
 function priceBreakdown(o) {
   const { pence, prefix } = priceOf(o);
-  const lines = [];
+  const d = readDiscounts();
+  const rows = []; // [emoji, html]
+
   const bike = o.legs.find((l) => l.mode === "cycle");
+  let bikePart = 0;
   if (bike) {
     const m = Math.round(bike.durationMin);
-    const payg = Math.round((100 + 29 * m) ); // £1 unlock + 29p/min, in pence
-    const passes = Math.max(1, Math.ceil(m / 30)) * 399;
-    lines.push(passes <= payg
-      ? `🍋‍🟩 Lime: a ${Math.max(1, Math.ceil(m / 30)) * 30}-min pass (${money(passes)}) beats pay-as-you-go (${money(payg)}) for ${m} min riding.`
-      : `🍋‍🟩 Lime: pay-as-you-go (${money(payg)}) is cheaper than a pass here.`);
+    const p = bikePricing(m);
+    bikePart = p.pence;
+    rows.push(["🍋‍🟩", p.pass
+      ? `Lime: a ${p.passMins}-min pass is cheapest here — ${money(bikePart)} for ${m} min riding.`
+      : `Lime: pay-as-you-go (£1 unlock + 29p/min) is ${money(bikePart)} for ${m} min riding.`]);
   }
-  if (hasTrain(o.legs)) lines.push(`🚆 Train fare estimated off-peak; a railcard saves ~⅓ (toggle in Custom).`);
-  if (o.brand || o.legs.some((l) => l.mode === "car")) lines.push(`🚗 Cab fare is an upper estimate (shown as “&lt;”); the app charges the live metered price.`);
-  if (o.legs.some((l) => RAIL_MODES.includes(l.mode) && l.mode !== "national-rail" && l.mode !== "train")) lines.push(`🚇 Tube/Overground fare is a zone-based estimate.`);
-  if (!lines.length) return "";
-  return `<div class="ai-note"><b>✨ How we worked out ${prefix}${money(pence)}</b><br>${lines.join("<br>")}</div>`;
+
+  const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
+  if (isCab) {
+    rows.push(["🚗", `${cap(o.brand || "Cab")} fare is an upper estimate (the “&lt;”); you pay the live metered price in the app.`]);
+  } else {
+    // The transit portion is whatever's left after the bike hire.
+    const transit = Math.max(0, o.costPence - bikePart);
+    const hasBus = o.legs.some((l) => l.mode === "bus");
+    const railPart = Math.max(0, transit - (hasBus ? 175 : 0));
+    if (hasTrain(o.legs)) {
+      rows.push(["🚆", d.railcard
+        ? `Train: ${money(railcardPence(railPart))} with your railcard applied (${money(railPart)} without). One through-ticket covers the whole train journey.`
+        : `Train: ${money(railPart)} off-peak — a railcard saves ~⅓ (${money(railcardPence(railPart))}). Buy one through-ticket for the whole train journey.`]);
+    } else if (railPart > 0) {
+      rows.push(["🚇", `Tube/Overground: ${money(railPart)} — a zone-based pay-as-you-go estimate.`]);
+    }
+    if (hasBus) rows.push(["🚌", `Bus: ${money(175)} (Hopper — unlimited buses within an hour).`]);
+  }
+
+  if (!rows.length) return "";
+  const body = rows
+    .map(([em, txt]) => `<div class="ai-row"><span class="ai-em">${em}</span><span class="ai-txt">${txt}</span></div>`)
+    .join("");
+  return `<div class="ai-note"><b>✨ How we worked out ${prefix}${money(pence)}</b>${body}</div>`;
 }
 
 function closeDetail() {
@@ -753,6 +811,13 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.27", [
+    "Tap the Uber/Bolt pill on a card to open the app — it's now a proper button.",
+    "Lime opens from the bike step on the route page (its icon replaces the map icon there).",
+    "Tube/rail steps now show the bound — Eastbound, Westbound, Northbound or Southbound.",
+    "Train hops on one journey combine into a single section with one Trainline link (buy one through-ticket).",
+    "Price breakdown now lists each fare (tube, train, bus, Lime) with the numbers, laid out as neat bullets.",
+  ]],
   ["0.26", [
     "Pub stops now find pubs serving Jubel or Guinness within a 15-min walk, shown on the map, with a link to the brand's pub finder.",
     "Custom tab tidied: section titles, Travellers 1–6, a Discounts section (Railcard, Uber One), and Avoid chips that turn into a red ✕.",

@@ -113,6 +113,10 @@ body {
 .leg.cycle { background: #d8f7ec; color: var(--accent-dark); font-weight: 700; }
 .leg.walking { background: #eef1f5; color: var(--muted); }
 .leg.car { background: #e9e2ff; color: #4b2fbf; font-weight: 700; }
+/* Uber/Bolt pill doubles as the "open the app" button. */
+.leg.car.appbtn { background: #111; color: #fff; padding: 5px 9px; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.leg.car.appbtn .pill-logo { border-radius: 4px; }
+.pill-arrow { font-weight: 800; opacity: .85; }
 .leg.pub { background: #fff1cc; padding: 4px 7px; }
 .arrow { color: var(--muted); font-size: 12px; }
 
@@ -228,10 +232,14 @@ body.has-results .field input { padding: 11px 4px; }
 /* card spacing: tighter top, more room under the time */
 .card-head { padding: 11px 15px 13px; }
 .time { margin-bottom: 5px; }
-/* cab/lime "open app" diagonal-arrow link (bottom-left of card) */
-.app-open { display: inline-flex; align-items: center; gap: 5px; margin-top: 9px; font-size: 12.5px; font-weight: 700; color: var(--brand); text-decoration: none; }
 /* AI-worked price breakdown on the route page */
 .ai-note { margin-top: 10px; background: #f1f5ff; border: 1px solid #dbe6ff; border-radius: 11px; padding: 10px 12px; font-size: 12.5px; color: var(--ink); line-height: 1.5; }
+.ai-note b { display: block; margin-bottom: 7px; }
+/* each emoji is a bullet; text hangs inline beside it */
+.ai-row { display: flex; gap: 8px; align-items: flex-start; }
+.ai-row + .ai-row { margin-top: 5px; }
+.ai-em { flex: 0 0 auto; width: 18px; text-align: center; }
+.ai-txt { flex: 1; }
 
 /* changelog bottom sheet */
 .sheet { position: fixed; inset: 0; z-index: 950; background: rgba(15,27,45,.45); display: grid; align-items: end; }
