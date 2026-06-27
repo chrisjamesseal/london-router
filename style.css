@@ -141,8 +141,11 @@ body {
   display: inline-block; font-weight: 800; font-size: 14px; color: #7a5b00; text-decoration: none;
 }
 .pub-name:active { opacity: .7; }
-.pub-beers { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.pub-beers li { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.pub-beers { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.pub-beers li {
+  display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink);
+  background: var(--bg); border-radius: 9px; padding: 5px 9px;
+}
 .beer-logo { width: 18px; height: 18px; border-radius: 4px; flex: 0 0 auto; }
 
 /* bottom search bar — placed within thumb's reach */
@@ -176,32 +179,23 @@ body {
 
 /* extras dropdown */
 .extras { border: 1.5px solid var(--line); border-radius: 13px; padding: 2px 12px; }
-.extras[open] { padding-bottom: 10px; }
+.extras[open] { padding-bottom: 12px; }
 .extras summary {
   list-style: none; cursor: pointer; padding: 11px 0; font-weight: 700; font-size: 14px;
 }
 .extras summary::-webkit-details-marker { display: none; }
-.ex-hint { font-weight: 500; color: var(--muted); font-size: 12px; }
-.ex-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 8px 0; font-size: 14px; font-weight: 600; cursor: pointer;
-}
-.ex-row input[type="number"] {
-  width: 64px; border: 1.5px solid var(--line); border-radius: 10px;
-  padding: 8px 10px; font-size: 15px; font-family: inherit; text-align: center;
-}
-.ex-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); flex: 0 0 auto; }
-/* checkbox sits right next to its label, not spread apart */
-.ex-row.check { justify-content: flex-start; gap: 10px; }
-/* +/- people stepper */
-.stepper { display: flex; align-items: center; gap: 12px; }
-.stepper button {
-  width: 32px; height: 32px; border-radius: 9px; border: 1.5px solid var(--line);
-  background: var(--card); color: var(--brand); font-size: 20px; font-weight: 700;
-  font-family: inherit; cursor: pointer; display: grid; place-items: center; line-height: 1;
-}
-.stepper button:active { background: var(--bg); }
-#peopleVal { min-width: 16px; text-align: center; font-weight: 800; font-size: 16px; }
+.extras summary::before { content: "＋ "; color: var(--brand); font-weight: 800; }
+.extras[open] summary::before { content: "− "; }
+.ex-line { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 14px; font-weight: 600; cursor: pointer; }
+.ex-line.col { flex-direction: column; align-items: stretch; gap: 8px; cursor: default; }
+.ex-line input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); flex: 0 0 auto; }
+.ex-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.seg.full { width: 100%; }
+.seg.full button { flex: 1; height: 34px; }
+.when-time { border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 11px; font-family: inherit; font-size: 15px; color: var(--ink); }
+.avoid { display: flex; flex-wrap: wrap; gap: 8px; }
+.avoid label { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 9px; cursor: pointer; }
+.avoid input { width: 16px; height: 16px; accent-color: var(--brand); }
 
 /* Once results are on screen, free up vertical space for the list. */
 body.has-results .bar { padding-top: 9px; }
@@ -219,7 +213,8 @@ body.has-results .ac { display: none; } /* never overlap the results list */
 /* faint map texture behind the splash */
 .splash::before {
   content: ""; position: absolute; inset: 0; z-index: 0; opacity: 0.3; pointer-events: none;
-  background: url("https://mt0.google.com/vt/lyrs=m&x=1023&y=681&z=11") center/cover no-repeat;
+  /* label-free basemap so it reads as texture, not clutter */
+  background: url("https://a.basemaps.cartocdn.com/light_nolabels/11/1023/681.png") center/cover no-repeat;
 }
 .splash > * { position: relative; z-index: 1; }
 body.has-results .splash { display: none; }

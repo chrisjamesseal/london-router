@@ -21,9 +21,9 @@
       <h1 class="splash-title">Quickest</h1>
       <p class="splash-sub">London, the quickest way.</p>
       <ul class="splash-feats">
-        <li>🚲 Bike, tube, train and bus</li>
-        <li>💷 Fastest and cheapest fares</li>
-        <li>🍺 Optional pub stop en route</li>
+        <li>🚲 Bike, Train, Tube, Bus, Cabs</li>
+        <li>💷 Find Fastest &amp; Cheapest Fares</li>
+        <li>🍺 Add a Pub Stop On Route</li>
       </ul>
     </div>
     <div id="tabs" class="tabs hidden" role="tablist">
@@ -71,10 +71,6 @@
         <div id="acTo" class="ac hidden"></div>
       </div>
       <div class="opts">
-        <label class="opt">
-          <input type="checkbox" id="pubStop" />
-          <span>🍺 Pub Stop</span>
-        </label>
         <div class="opt">
           <span>👥 Travellers</span>
           <div class="seg" id="peopleSeg">
@@ -85,7 +81,33 @@
           </div>
         </div>
       </div>
-      <button id="go" class="go">Find Best &amp; Cheapest Route</button>
+      <details class="extras" id="extras">
+        <summary>Extras</summary>
+        <label class="ex-line">
+          <input type="checkbox" id="pubStop" />
+          <span>🍺 Add a Pub Stop</span>
+        </label>
+        <div class="ex-line col">
+          <span class="ex-h">🕐 When</span>
+          <div class="seg full" id="whenSeg">
+            <button type="button" data-when="now" class="on">Leave now</button>
+            <button type="button" data-when="depart">Depart at</button>
+            <button type="button" data-when="arrive">Arrive by</button>
+          </div>
+          <input type="datetime-local" id="whenTime" class="when-time hidden" />
+        </div>
+        <div class="ex-line col">
+          <span class="ex-h">🚫 Avoid</span>
+          <div class="avoid" id="avoid">
+            <label><input type="checkbox" data-mode="bike" />🚲 Bike</label>
+            <label><input type="checkbox" data-mode="tube" />🚇 Tube</label>
+            <label><input type="checkbox" data-mode="train" />🚆 Train</label>
+            <label><input type="checkbox" data-mode="bus" />🚌 Bus</label>
+            <label><input type="checkbox" data-mode="cab" />🚗 Cabs</label>
+          </div>
+        </div>
+      </details>
+      <button id="go" class="go">Find Best and Cheapest Routes</button>
     </div>
   </header>
 

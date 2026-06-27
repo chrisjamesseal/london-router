@@ -48,18 +48,19 @@ const BOARD_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-ra
 // Small favicon-style logos via Google's favicon service.
 const favicon = (domain) => `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
 const BRAND_LOGOS = { uber: "uber.com", bolt: "bolt.eu" };
-const BEER_LOGOS = {
-  guinness: "guinness.com", camden: "camdentownbrewery.com",
-  "neck oil": "beavertownbrewery.co.uk", beavertown: "beavertownbrewery.co.uk",
-  estrella: "estrelladamm.com", "london pride": "fullers.co.uk", "fuller": "fullers.co.uk",
-  peroni: "peroni.co.uk", stella: "stellaartois.com", heineken: "heineken.com",
-  madri: "madriexcepcional.com", asahi: "asahibeer.co.uk", "birra moretti": "birramoretti.com",
-};
-function beerLogo(name) {
-  const n = name.toLowerCase();
-  for (const k in BEER_LOGOS) if (n.includes(k)) return favicon(BEER_LOGOS[k]);
-  return null;
-}
+// Most-popular UK draught pints, ranked, each with a logo we can resolve.
+const POPULAR_BEERS = [
+  { name: "Guinness", domain: "guinness.com", key: "guinness" },
+  { name: "Stella Artois", domain: "stellaartois.com", key: "stella" },
+  { name: "Camden Hells", domain: "camdentownbrewery.com", key: "camden" },
+  { name: "Birra Moretti", domain: "birramoretti.co.uk", key: "moretti" },
+  { name: "Peroni", domain: "peroni.co.uk", key: "peroni" },
+  { name: "Estrella Damm", domain: "estrelladamm.com", key: "estrella" },
+  { name: "Heineken", domain: "heineken.com", key: "heineken" },
+  { name: "Asahi", domain: "asahibeer.co.uk", key: "asahi" },
+  { name: "Neck Oil", domain: "beavertownbrewery.co.uk", key: "neck" },
+  { name: "London Pride", domain: "fullers.co.uk", key: "pride" },
+];
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -168,10 +169,11 @@ $("#locBtn").onclick = () => {
 
 $("#go").onclick = plan;
 $("#to").addEventListener("keydown", (e) => e.key === "Enter" && plan());
-// Re-plan when the pub stop changes, if we already have a journey.
-$("#pubStop").addEventListener("change", () => {
+
+const replanIfReady = () => {
   if ($("#from").value.trim() && $("#to").value.trim() && lastResult) plan();
-});
+};
+
 // Party size (1–4 buttons) only affects the fare split — re-render, no re-plan.
 let peopleCount = 1;
 $("#peopleSeg")
@@ -184,6 +186,50 @@ $("#peopleSeg")
     };
   });
 
+// Extras: pub stop, departure/arrival time, and modes to avoid.
+let whenMode = "now"; // "now" | "depart" | "arrive"
+$("#whenSeg")
+  .querySelectorAll("button")
+  .forEach((b) => {
+    b.onclick = () => {
+      whenMode = b.dataset.when;
+      $("#whenSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+      $("#whenTime").classList.toggle("hidden", whenMode === "now");
+      if (whenMode !== "now" && !$("#whenTime").value) {
+        const d = new Date(Date.now() + 5 * 60000); // default ~now
+        $("#whenTime").value = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+      replanIfReady();
+    };
+  });
+$("#whenTime").addEventListener("change", replanIfReady);
+$("#pubStop").addEventListener("change", replanIfReady);
+$("#avoid").addEventListener("change", replanIfReady);
+
+const avoidedModes = () =>
+  new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
+
+// Build engine options from the Extras controls.
+function extrasOpts() {
+  const avoid = avoidedModes();
+  const TRANSIT = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram", "bus", "walking"];
+  const trainGroup = ["national-rail", "overground", "elizabeth-line", "dlr", "tram"];
+  const transitModes = TRANSIT.filter((m) => {
+    if (m === "tube" && avoid.has("tube")) return false;
+    if (m === "bus" && avoid.has("bus")) return false;
+    if (avoid.has("train") && trainGroup.includes(m)) return false;
+    return true;
+  });
+  const o = { transitModes, allowBike: !avoid.has("bike") };
+  if (whenMode !== "now" && $("#whenTime").value) {
+    const [d, t] = $("#whenTime").value.split("T");
+    o.date = d.replaceAll("-", "");
+    o.time = t.replace(":", "");
+    o.timeIs = whenMode === "arrive" ? "Arriving" : "Departing";
+  }
+  return o;
+}
+
 // Use a typeahead pick's exact coords if the user chose one; else geocode text.
 function resolve(input) {
   const str = input.value.trim();
@@ -191,21 +237,7 @@ function resolve(input) {
   return geocode(str);
 }
 
-// Exact tap lists aren't available in open data, so this is an indicative fallback.
-const DEFAULT_BEERS = ["Guinness", "Camden Hells", "Beavertown Neck Oil", "Estrella Damm", "Guest cask ale"];
-
-// Beers we can actually infer from the pub's OpenStreetMap tags.
-function beersFromTags(t = {}) {
-  const out = [];
-  if (t.brewery && t.brewery !== "yes") out.push(...t.brewery.split(";").map((s) => s.trim()));
-  if (t.real_ale === "yes" || t.real_ale === "only" || t.cask === "yes") out.push("Cask ales");
-  if (t["drink:beer"] && t["drink:beer"] !== "yes") out.push(t["drink:beer"]);
-  if (t.microbrewery === "yes") out.push("House microbrew");
-  if (t.craft_beer === "yes") out.push("Craft beer");
-  return [...new Set(out.filter(Boolean))];
-}
-
-// Nearest real (named) pub to a point, with beers inferred from OSM where possible.
+// Nearest real (named) pub to a point, with its address for a precise Maps link.
 async function findPub(lat, lon) {
   const q = `[out:json][timeout:10];node(around:650,${lat},${lon})[amenity=pub][name];out 15;`;
   try {
@@ -215,7 +247,9 @@ async function findPub(lat, lon) {
     if (!pubs.length) return null;
     const d2 = (e) => (e.lat - lat) ** 2 + (e.lon - lon) ** 2;
     const best = pubs.sort((a, b) => d2(a) - d2(b))[0];
-    return { name: best.tags.name, lat: best.lat, lon: best.lon, beers: beersFromTags(best.tags) };
+    const t = best.tags;
+    const addr = [t["addr:housenumber"], t["addr:street"], t["addr:postcode"]].filter(Boolean).join(" ");
+    return { name: t.name, lat: best.lat, lon: best.lon, addr };
   } catch {
     return null;
   }
@@ -241,8 +275,9 @@ async function plan() {
     ]);
     if (!origin) throw new Error(`Couldn't find "${originStr}"`);
     if (!dest) throw new Error(`Couldn't find "${destStr}"`);
-    const data = await runPlan(origin, dest, bays, { stations });
+    const data = await runPlan(origin, dest, bays, { stations, ...extrasOpts() });
     if (!data.options.length) throw new Error("No routes found");
+    data._noCab = avoidedModes().has("cab");
     lastResult = data;
     render(data);
     stopLoading();
@@ -376,7 +411,8 @@ function render(data) {
   tabs.classList.toggle("hidden", !data.options.length);
   document.body.classList.toggle("has-results", data.options.length > 0);
   data._syn = estimates(data);
-  const movers = [...data.options, data._syn.uber, data._syn.bolt];
+  const cabs = data._noCab ? [] : [data._syn.uber, data._syn.bolt];
+  const movers = [...data.options, ...cabs];
   const byTime = [...movers].sort((a, b) => a.durationMin - b.durationMin);
   const byCost = [...movers].sort((a, b) => a.costPence - b.costPence);
   $("#tabFastest").textContent = byTime[0] ? `${byTime[0].durationMin} min` : "";
@@ -414,7 +450,8 @@ function renderResults() {
     sortBy === "cheapest"
       ? (a, b) => a.costPence - b.costPence || a.durationMin - b.durationMin
       : (a, b) => a.durationMin - b.durationMin || a.costPence - b.costPence;
-  const movers = [...data.options, syn.uber, syn.bolt].sort(sorter);
+  const cabs = data._noCab ? [] : [syn.uber, syn.bolt];
+  const movers = [...data.options, ...cabs].sort(sorter);
   const opts = [...movers, syn.walk]; // free walk always sits at the bottom
 
   const badgeLabel = sortBy === "cheapest" ? "Cheapest" : "Fastest";
@@ -511,17 +548,16 @@ async function loadPub(o) {
   const body = step.querySelector(".step-body");
   const pub = o._pub;
   if (!pub.name) return (body.innerHTML = '<div class="pub-name">No Pub on Route</div>');
-  // Only show beers we have a real logo for, so it looks official.
-  const beers = (pub.beers && pub.beers.length ? pub.beers : DEFAULT_BEERS)
-    .map((b) => ({ b, logo: beerLogo(b) }))
-    .filter((x) => x.logo)
-    .slice(0, 5)
-    .map((x) => `<li><img class="beer-logo" src="${x.logo}" alt=""> ${x.b}</li>`)
+  // The most popular pints, ranked — shown as wrapped chips with their logos.
+  const beers = POPULAR_BEERS.slice(0, 8)
+    .map((b) => `<li><img class="beer-logo" src="${favicon(b.domain)}" alt=""> ${b.name}</li>`)
     .join("");
-  const gmaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pub.name)}%20${pub.lat}%2C${pub.lon}`;
+  // Include the address so Google lands on the pub's place page, not a list.
+  const query = encodeURIComponent([pub.name, pub.addr].filter(Boolean).join(", "));
+  const gmaps = `https://www.google.com/maps/search/?api=1&query=${query}`;
   body.innerHTML = `
     <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
-    ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}`;
+    <ul class="pub-beers">${beers}</ul>`;
 }
 
 // Sort tabs (Skyscanner-style): re-rank the same routes by time or cost.
@@ -600,27 +636,54 @@ function emojiMarker(lat, lon, emoji, label) {
   }).bindTooltip(label);
 }
 
+// Only trust geometry that actually sits in the UK; swap [lon,lat] if needed.
+function saneGeometry(arr) {
+  if (!arr || !arr.length || !Array.isArray(arr[0])) return null;
+  const inUK = (lat, lon) => lat >= 49 && lat <= 61 && lon >= -8 && lon <= 2;
+  const [a, b] = arr[0];
+  if (inUK(a, b)) return arr;
+  if (inUK(b, a)) return arr.map(([x, y]) => [y, x]);
+  return null;
+}
+function legColor(leg) {
+  if (leg.mode === "cycle") return "#00b894";
+  if (leg.mode === "walking") return "#94a3b8";
+  if (leg.mode === "car") return "#4b2fbf";
+  return lineColor(leg);
+}
+
 function drawRoute(data, o) {
   layers.clearLayers();
-  const O = data.origin,
-    D = data.dest;
-  const pts = [[O.lat, O.lon]];
+  const O = data.origin, D = data.dest;
+  const all = [];
+
+  // Draw each leg along its true path where we have it, else a straight hop.
+  for (const leg of o.legs) {
+    const geom = saneGeometry(leg.geometry);
+    const pts = geom || (leg.fromLL && leg.toLL ? [[leg.fromLL.lat, leg.fromLL.lon], [leg.toLL.lat, leg.toLL.lon]] : null);
+    if (!pts || pts.length < 2) continue;
+    const walkish = leg.mode === "walking" || leg.mode === "cycle";
+    L.polyline(pts, {
+      color: legColor(leg), weight: 5, opacity: 0.85,
+      dashArray: walkish ? "2 7" : null, lineCap: "round",
+    }).addTo(layers);
+    all.push(...pts);
+  }
+
+  // Endpoint + bike-bay markers.
   if ((O.name || "").toLowerCase().includes("current location"))
     emojiMarker(O.lat, O.lon, "📍", "You are here").addTo(layers);
   else dotMarker(O.lat, O.lon, "#00b894", "Start").addTo(layers);
-  if (o.pickupBay) {
-    emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
-    pts.push([o.pickupBay.lat, o.pickupBay.lon]);
-  }
-  if (o.dropoffBay) {
-    emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🅿️", "Drop off the bike").addTo(layers);
-    pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
-  }
-  pts.push([D.lat, D.lon]);
+  if (o.pickupBay) emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
+  if (o.dropoffBay) emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🅿️", "Drop off the bike").addTo(layers);
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
-  L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);
-  lastRoutePts = pts;
-  map.fitBounds(L.latLngBounds(pts).pad(0.25));
+  all.push([O.lat, O.lon], [D.lat, D.lon]);
+
+  // Fallback dotted line if no leg geometry at all.
+  if (all.length <= 2) L.polyline([[O.lat, O.lon], [D.lat, D.lon]], { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.7 }).addTo(layers);
+
+  lastRoutePts = all;
+  map.fitBounds(L.latLngBounds(all).pad(0.2));
 }
 
 if ("serviceWorker" in navigator) {
