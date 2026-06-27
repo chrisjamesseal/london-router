@@ -3,7 +3,7 @@
 // - Same-origin GETs (incl. the big bays.json) are cached on first use
 //   (stale-while-revalidate).
 // - Live API calls to TfL / Nominatim always hit the network.
-const CACHE = "quickest-v22";
+const CACHE = "quickest-v23";
 const SHELL = [
   "./",
   "./index.html",

@@ -160,15 +160,16 @@ const LOADING_LINES = [
 let loadTimer = null;
 function startLoading() {
   let i = 0;
-  status(LOADING_LINES[0], true);
+  $("#loadingMsg").textContent = LOADING_LINES[0];
+  $("#loading").classList.remove("hidden");
   loadTimer = setInterval(() => {
     i = (i + 1) % LOADING_LINES.length;
-    status(LOADING_LINES[i], true);
+    $("#loadingMsg").textContent = LOADING_LINES[i];
   }, 1600);
 }
 function stopLoading() {
   if (loadTimer) clearInterval(loadTimer), (loadTimer = null);
-  status("", false);
+  $("#loading").classList.add("hidden");
 }
 
 const pounds = (p) => "£" + (p / 100).toFixed(2);
@@ -297,8 +298,9 @@ async function plan() {
     if (!origin) throw new Error(`Couldn't find "${originStr}"`);
     if (!dest) throw new Error(`Couldn't find "${destStr}"`);
     const data = await runPlan(origin, dest, bays, { stations, ...extrasOpts() });
-    if (!data.options.length) throw new Error("No routes found");
     data._noCab = avoidedModes().has("cab");
+    // Cab and walk options are always synthesised, so there's always a route to
+    // show even if the transit engine returned nothing (e.g. everything avoided).
     lastResult = data;
     render(data);
     stopLoading();
@@ -351,10 +353,10 @@ function legChip(leg) {
   if (leg.mode === "cycle")
     return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${n} Minute Bike</span>`;
   if (leg.mode === "walking")
-    return `<span class="leg walking"><span class="ic">🚶</span>${n} Minute Walk</span>`;
+    return `<span class="leg walking"><span class="ic">🚶</span>${leg.km ? `${leg.km} km Walk` : `${n} Minute Walk`}</span>`;
   if (leg.mode === "car") {
     const badge = leg.brand
-      ? `<img class="pill-logo" src="${favicon(BRAND_LOGOS[leg.brand])}" alt="${leg.brand}">`
+      ? `<img class="pill-logo" src="${favicon(BRAND_LOGOS[leg.brand])}" alt="" onerror="this.replaceWith(document.createTextNode('🚗'))">`
       : '<span class="ic">🚗</span>';
     return `<span class="leg car">${badge}${n} Minute Ride</span>`;
   }
@@ -406,23 +408,22 @@ function stepDetail(leg) {
 // Rough taxi + walking estimates, synthesised from the straight-line distance.
 // Uber/Bolt are real-ish options; the free walk is the gag pinned to the bottom.
 function estimates(data) {
-  const people = peopleCount;
   const km = (data.crowMetres / 1000) * 1.3; // crow → road distance
   const driveMin = Math.round(km * 3 + 3); // ~20 km/h London traffic + pickup
   const uberP = Math.round(250 + 150 * km + 25 * driveMin);
   const boltP = Math.round(uberP * 0.88);
   const walkTotal = Math.round((km / 5) * 60); // a brisk 5 km/h
 
-  const car = (label, brand, costPence) => {
-    const o = { label, brand, costPence, durationMin: driveMin, synthetic: true,
-      legs: [{ mode: "car", durationMin: driveMin, brand, fromLL: data.origin, toLL: data.dest }] };
-    o.priceSub = people > 1 ? `${money(Math.round(o.costPence / people))} each` : "Split between you?";
-    return o;
-  };
+  const car = (label, brand, costPence) => ({
+    label, brand, costPence, durationMin: driveMin, synthetic: true,
+    legs: [{ mode: "car", durationMin: driveMin, brand, fromLL: data.origin, toLL: data.dest }],
+  });
 
-  const walk = { label: "Walk 🚶", costPence: 0, durationMin: walkTotal, synthetic: true,
-    legs: [{ mode: "walking", durationMin: walkTotal, fromLL: data.origin, toLL: data.dest }],
-    note: "Free — bring comfy shoes 🦵", priceSub: `${km.toFixed(1)} km` };
+  const walk = {
+    label: "Walk 🚶", costPence: 0, durationMin: walkTotal, synthetic: true,
+    legs: [{ mode: "walking", durationMin: walkTotal, km: Math.round(km), fromLL: data.origin, toLL: data.dest }],
+    note: "Free — bring comfy shoes 🦵",
+  };
 
   return { uber: car("Uber", "uber", uberP), bolt: car("Bolt", "bolt", boltP), walk };
 }
@@ -461,7 +462,13 @@ function setTab(sort) {
 function summaryHTML(o, data) {
   const timeBlock = `<div class="time">${o.durationMin}<small> min</small></div>`;
   const rail = !o.synthetic && hasTrain(o.legs) ? railcardPence(o.costPence) : null;
-  const priceSub = o.priceSub || `${o.walkMetres} m walk`;
+  // Cabs split between travellers: show per-person big, total underneath.
+  let priceMain = money(o.costPence);
+  let priceSub = "";
+  if (o.brand && peopleCount > 1) {
+    priceMain = money(Math.round(o.costPence / peopleCount));
+    priceSub = `${money(o.costPence)} total`;
+  }
   // Pub icon (no name) appears in the summary; the name shows on the route page.
   const legChips = o.legs.map(legChip);
   if ($("#pubStop").checked && !o.synthetic) {
@@ -472,7 +479,7 @@ function summaryHTML(o, data) {
   return `
     <div class="top">
       <div class="timewrap">${timeBlock}</div>
-      <div class="price">${money(o.costPence)}<small>${priceSub}</small>${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
+      <div class="price">${priceMain}${priceSub ? `<small>${priceSub}</small>` : ""}${rail ? `<small class="rail">${money(rail)} w/ railcard</small>` : ""}</div>
     </div>
     <div class="legs">${legs}</div>`;
 }
@@ -496,9 +503,13 @@ function renderResults() {
 
   opts.forEach((o, i) => {
     const card = document.createElement("div");
-    card.className = "card";
+    card.className = "card" + (o.brand ? " card-app" : "");
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
-    card.innerHTML = `<div class="card-head">${badge}${summaryHTML(o, data)}</div>`;
+    // Cards that open an app (Uber/Bolt) get an "opens app" cue on the right.
+    const appCue = o.brand
+      ? `<span class="app-cue"><img class="app-logo" src="${favicon(BRAND_LOGOS[o.brand])}" alt="" onerror="this.replaceWith(document.createTextNode('🚗'))"><span class="app-arrow">↗</span></span>`
+      : "";
+    card.innerHTML = `<div class="card-head">${badge}${appCue}${summaryHTML(o, data)}</div>`;
     card.querySelector(".card-head").onclick = o.brand
       ? () => window.open(rideLink(o.brand), "_blank", "noopener")
       : () => openDetail(o);
