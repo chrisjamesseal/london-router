@@ -48,19 +48,44 @@ const BOARD_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-ra
 // Small favicon-style logos via Google's favicon service.
 const favicon = (domain) => `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
 const BRAND_LOGOS = { uber: "uber.com", bolt: "bolt.eu" };
-// Most-popular UK draught pints, ranked, each with a logo we can resolve.
-const POPULAR_BEERS = [
-  { name: "Guinness", domain: "guinness.com", key: "guinness" },
-  { name: "Stella Artois", domain: "stellaartois.com", key: "stella" },
-  { name: "Camden Hells", domain: "camdentownbrewery.com", key: "camden" },
-  { name: "Birra Moretti", domain: "birramoretti.co.uk", key: "moretti" },
-  { name: "Peroni", domain: "peroni.co.uk", key: "peroni" },
-  { name: "Estrella Damm", domain: "estrelladamm.com", key: "estrella" },
-  { name: "Heineken", domain: "heineken.com", key: "heineken" },
-  { name: "Asahi", domain: "asahibeer.co.uk", key: "asahi" },
-  { name: "Neck Oil", domain: "beavertownbrewery.co.uk", key: "neck" },
-  { name: "London Pride", domain: "fullers.co.uk", key: "pride" },
+// Beers & ciders we can show a real logo for. Only used to confirm/label drinks
+// that a pub *actually* lists in OpenStreetMap — never as a generic guess.
+const DRINK_LOGOS = [
+  // beers
+  { key: "guinness", name: "Guinness", domain: "guinness.com" },
+  { key: "stella", name: "Stella Artois", domain: "stellaartois.com" },
+  { key: "camden", name: "Camden Hells", domain: "camdentownbrewery.com" },
+  { key: "moretti", name: "Birra Moretti", domain: "birramoretti.co.uk" },
+  { key: "peroni", name: "Peroni", domain: "peroni.co.uk" },
+  { key: "estrella", name: "Estrella Damm", domain: "estrelladamm.com" },
+  { key: "heineken", name: "Heineken", domain: "heineken.com" },
+  { key: "asahi", name: "Asahi", domain: "asahibeer.co.uk" },
+  { key: "neck oil", name: "Neck Oil", domain: "beavertownbrewery.co.uk" },
+  { key: "beavertown", name: "Beavertown", domain: "beavertownbrewery.co.uk" },
+  { key: "london pride", name: "London Pride", domain: "fullers.co.uk" },
+  { key: "fuller", name: "Fuller's", domain: "fullers.co.uk" },
+  { key: "madri", name: "Madrí", domain: "madriexcepcional.com" },
+  { key: "carling", name: "Carling", domain: "carling.com" },
+  { key: "amstel", name: "Amstel", domain: "amstel.com" },
+  { key: "cruzcampo", name: "Cruzcampo", domain: "cruzcampo.com" },
+  { key: "carlsberg", name: "Carlsberg", domain: "carlsberg.co.uk" },
+  { key: "budweiser", name: "Budweiser", domain: "budweiser.co.uk" },
+  { key: "san miguel", name: "San Miguel", domain: "sanmiguel.co.uk" },
+  { key: "staropramen", name: "Staropramen", domain: "staropramen.com" },
+  // ciders
+  { key: "strongbow", name: "Strongbow", domain: "strongbow.co.uk" },
+  { key: "thatcher", name: "Thatchers", domain: "thatcherscider.co.uk" },
+  { key: "aspall", name: "Aspall", domain: "aspall.co.uk" },
+  { key: "magners", name: "Magners", domain: "magners.co.uk" },
+  { key: "kopparberg", name: "Kopparberg", domain: "kopparberg.co.uk" },
+  { key: "rekorderlig", name: "Rekorderlig", domain: "rekorderlig.com" },
+  { key: "inch", name: "Inch's", domain: "inchescider.com" },
+  { key: "bulmers", name: "Bulmers", domain: "bulmers.ie" },
 ];
+const drinkMatch = (text) => {
+  const n = (text || "").toLowerCase();
+  return DRINK_LOGOS.find((d) => n.includes(d.key)) || null;
+};
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -220,7 +245,7 @@ function extrasOpts() {
     if (avoid.has("train") && trainGroup.includes(m)) return false;
     return true;
   });
-  const o = { transitModes, allowBike: !avoid.has("bike") };
+  const o = { transitModes, allowBike: !avoid.has("bike"), allowCab: !avoid.has("cab") };
   if (whenMode !== "now" && $("#whenTime").value) {
     const [d, t] = $("#whenTime").value.split("T");
     o.date = d.replaceAll("-", "");
@@ -249,7 +274,13 @@ async function findPub(lat, lon) {
     const best = pubs.sort((a, b) => d2(a) - d2(b))[0];
     const t = best.tags;
     const addr = [t["addr:housenumber"], t["addr:street"], t["addr:postcode"]].filter(Boolean).join(" ");
-    return { name: t.name, lat: best.lat, lon: best.lon, addr };
+    // Only drinks the pub actually lists in OSM (brand/brewery/drink:* tags).
+    const drinks = [];
+    for (const k of ["brand", "brewery", "drink:beer", "drink:cider"]) {
+      const v = t[k];
+      if (v && v !== "yes") drinks.push(...v.split(";").map((s) => s.trim()));
+    }
+    return { name: t.name, lat: best.lat, lon: best.lon, addr, drinks };
   } catch {
     return null;
   }
@@ -410,6 +441,7 @@ function render(data) {
   const tabs = $("#tabs");
   tabs.classList.toggle("hidden", !data.options.length);
   document.body.classList.toggle("has-results", data.options.length > 0);
+  $("#go").textContent = data.options.length ? "Update" : "Find Best and Cheapest Routes";
   data._syn = estimates(data);
   const cabs = data._noCab ? [] : [data._syn.uber, data._syn.bolt];
   const movers = [...data.options, ...cabs];
@@ -548,16 +580,27 @@ async function loadPub(o) {
   const body = step.querySelector(".step-body");
   const pub = o._pub;
   if (!pub.name) return (body.innerHTML = '<div class="pub-name">No Pub on Route</div>');
-  // The most popular pints, ranked — shown as wrapped chips with their logos.
-  const beers = POPULAR_BEERS.slice(0, 8)
-    .map((b) => `<li><img class="beer-logo" src="${favicon(b.domain)}" alt=""> ${b.name}</li>`)
+  // Only drinks the pub genuinely lists (and that we have a logo for). If we're
+  // unsure, show nothing — accuracy over decoration.
+  const seen = new Set();
+  const drinks = [];
+  for (const d of pub.drinks || []) {
+    const m = drinkMatch(d);
+    if (m && !seen.has(m.name)) {
+      seen.add(m.name);
+      drinks.push(m);
+    }
+  }
+  const beers = drinks
+    .slice(0, 8)
+    .map((m) => `<li><img class="beer-logo" src="${favicon(m.domain)}" alt=""> ${m.name}</li>`)
     .join("");
   // Include the address so Google lands on the pub's place page, not a list.
   const query = encodeURIComponent([pub.name, pub.addr].filter(Boolean).join(", "));
   const gmaps = `https://www.google.com/maps/search/?api=1&query=${query}`;
   body.innerHTML = `
     <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
-    <ul class="pub-beers">${beers}</ul>`;
+    ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}`;
 }
 
 // Sort tabs (Skyscanner-style): re-rank the same routes by time or cost.
@@ -570,6 +613,36 @@ document.querySelectorAll(".tab").forEach((tab) => {
 });
 
 $("#backBtn").onclick = closeDetail;
+
+// Home / reset — clear everything and start a fresh search.
+function resetApp() {
+  $("#from").value = "";
+  $("#to").value = "";
+  ["from", "to"].forEach((id) => {
+    delete $("#" + id).dataset.lat;
+    delete $("#" + id).dataset.lon;
+  });
+  $("#acFrom").classList.add("hidden");
+  $("#acTo").classList.add("hidden");
+  $("#results").innerHTML = "";
+  lastResult = null;
+  $("#tabs").classList.add("hidden");
+  document.body.classList.remove("has-results");
+  closeDetail();
+  $("#extras").open = false;
+  $("#pubStop").checked = false;
+  $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
+  peopleCount = 1;
+  $("#peopleSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.n === "1"));
+  whenMode = "now";
+  $("#whenSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.when === "now"));
+  $("#whenTime").classList.add("hidden");
+  $("#whenTime").value = "";
+  sortBy = "fastest";
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.sort === "fastest"));
+  $("#go").textContent = "Find Best and Cheapest Routes";
+}
+$("#homeBtn").onclick = resetApp;
 
 // Location typeahead: debounced suggestions, tap to fill (with exact coords).
 function attachAutocomplete(input, box) {
@@ -585,7 +658,7 @@ function attachAutocomplete(input, box) {
       if (!items.length || input.value.trim() !== q) return box.classList.add("hidden");
       box._items = items;
       box.innerHTML = items
-        .map((s, i) => `<div class="ac-item" data-i="${i}">${s.name}</div>`)
+        .map((s, i) => `<div class="ac-item" data-i="${i}">${s.icon ? `<span class="ac-ic">${s.icon}</span>` : ""}${s.name}</div>`)
         .join("");
       box.classList.remove("hidden");
     }, 250);
@@ -636,54 +709,26 @@ function emojiMarker(lat, lon, emoji, label) {
   }).bindTooltip(label);
 }
 
-// Only trust geometry that actually sits in the UK; swap [lon,lat] if needed.
-function saneGeometry(arr) {
-  if (!arr || !arr.length || !Array.isArray(arr[0])) return null;
-  const inUK = (lat, lon) => lat >= 49 && lat <= 61 && lon >= -8 && lon <= 2;
-  const [a, b] = arr[0];
-  if (inUK(a, b)) return arr;
-  if (inUK(b, a)) return arr.map(([x, y]) => [y, x]);
-  return null;
-}
-function legColor(leg) {
-  if (leg.mode === "cycle") return "#00b894";
-  if (leg.mode === "walking") return "#94a3b8";
-  if (leg.mode === "car") return "#4b2fbf";
-  return lineColor(leg);
-}
-
 function drawRoute(data, o) {
   layers.clearLayers();
   const O = data.origin, D = data.dest;
-  const all = [];
-
-  // Draw each leg along its true path where we have it, else a straight hop.
-  for (const leg of o.legs) {
-    const geom = saneGeometry(leg.geometry);
-    const pts = geom || (leg.fromLL && leg.toLL ? [[leg.fromLL.lat, leg.fromLL.lon], [leg.toLL.lat, leg.toLL.lon]] : null);
-    if (!pts || pts.length < 2) continue;
-    const walkish = leg.mode === "walking" || leg.mode === "cycle";
-    L.polyline(pts, {
-      color: legColor(leg), weight: 5, opacity: 0.85,
-      dashArray: walkish ? "2 7" : null, lineCap: "round",
-    }).addTo(layers);
-    all.push(...pts);
-  }
-
-  // Endpoint + bike-bay markers.
+  const pts = [[O.lat, O.lon]];
   if ((O.name || "").toLowerCase().includes("current location"))
     emojiMarker(O.lat, O.lon, "📍", "You are here").addTo(layers);
   else dotMarker(O.lat, O.lon, "#00b894", "Start").addTo(layers);
-  if (o.pickupBay) emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
-  if (o.dropoffBay) emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🅿️", "Drop off the bike").addTo(layers);
+  if (o.pickupBay) {
+    emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
+    pts.push([o.pickupBay.lat, o.pickupBay.lon]);
+  }
+  if (o.dropoffBay) {
+    emojiMarker(o.dropoffBay.lat, o.dropoffBay.lon, "🅿️", "Drop off the bike").addTo(layers);
+    pts.push([o.dropoffBay.lat, o.dropoffBay.lon]);
+  }
+  pts.push([D.lat, D.lon]);
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
-  all.push([O.lat, O.lon], [D.lat, D.lon]);
-
-  // Fallback dotted line if no leg geometry at all.
-  if (all.length <= 2) L.polyline([[O.lat, O.lon], [D.lat, D.lon]], { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.7 }).addTo(layers);
-
-  lastRoutePts = all;
-  map.fitBounds(L.latLngBounds(all).pad(0.2));
+  L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);
+  lastRoutePts = pts;
+  map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
 
 if ("serviceWorker" in navigator) {
