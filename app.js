@@ -43,8 +43,10 @@ let layers = L.layerGroup().addTo(map);
 let lastResult = null;
 let sortBy = "fastest"; // "fastest" | "cheapest"
 
-// Railcards (1/3 off) apply to National Rail trains only — not the tube/bus.
-const TRAIN_MODES = ["national-rail", "train"];
+// "Train" = anything you'd buy a National Rail ticket for on Trainline and that a
+// railcard discounts: National Rail, Overground, Elizabeth line, Thameslink.
+// (Tube/DLR/tram are Oyster-only, so they stay separate.)
+const TRAIN_MODES = ["national-rail", "train", "overground", "elizabeth-line", "thameslink"];
 const hasTrain = (legs) => legs.some((l) => TRAIN_MODES.includes(l.mode));
 // Where you'd board (and so stop for a pint just before).
 const BOARD_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "train", "tram", "bus"];
@@ -398,7 +400,7 @@ function stepDetail(leg) {
   const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
   // Trains → Trainline (buy a ticket); bike legs → open the Lime app; everything
   // else → Google Maps directions for that leg.
-  const isTrain = leg.mode === "national-rail" || leg.mode === "train";
+  const isTrain = TRAIN_MODES.includes(leg.mode);
   const isBike = leg.mode === "cycle";
   const link = isTrain ? trainlineLink(leg) : isBike ? LIME_LINK : mapsLink(leg);
   const linkIc = isTrain
@@ -591,23 +593,41 @@ function trainlineLink(leg) {
   return `https://www.thetrainline.com/train-times/${slug(leg.from)}-to-${slug(leg.to)}`;
 }
 
-// Collapse consecutive National Rail hops into one leg — you buy a single
-// through-ticket for the whole train journey (one Trainline link).
+// Collapse a whole train journey into ONE section — you buy a single
+// through-ticket for it (one Trainline link). A run of train hops is merged even
+// across the short platform-change walks between them.
 function mergeTrainLegs(legs) {
+  const isTrain = (l) => l && TRAIN_MODES.includes(l.mode);
   const out = [];
-  for (const l of legs) {
-    const prev = out[out.length - 1];
-    if (prev && TRAIN_MODES.includes(prev.mode) && TRAIN_MODES.includes(l.mode)) {
-      out[out.length - 1] = {
-        ...prev,
-        to: l.to,
-        toLL: l.toLL,
-        durationMin: (prev.durationMin || 0) + (l.durationMin || 0),
-        line: prev.line && l.line && prev.line !== l.line ? `${prev.line} + ${l.line}` : prev.line || l.line,
-        terminus: l.terminus || prev.terminus,
-        summary: `${cleanName(prev.from)} → ${cleanName(l.to)}`,
-      };
-    } else out.push({ ...l });
+  let i = 0;
+  while (i < legs.length) {
+    if (!isTrain(legs[i])) { out.push({ ...legs[i] }); i++; continue; }
+    // Extend the run: keep absorbing further train hops and the interchange
+    // walks that sit between them.
+    let last = i, k = i + 1;
+    while (k < legs.length) {
+      if (isTrain(legs[k])) { last = k; k++; continue; }
+      if (legs[k].mode === "walking") {
+        let p = k;
+        while (p < legs.length && legs[p].mode === "walking") p++;
+        if (p < legs.length && isTrain(legs[p])) { k = p; continue; } // walk → train: absorb
+      }
+      break;
+    }
+    const run = legs.slice(i, last + 1);
+    const first = legs[i], lastLeg = legs[last];
+    const lines = [...new Set(run.filter(isTrain).map((l) => l.line).filter(Boolean))];
+    out.push({
+      ...first,
+      mode: "national-rail", // one train section → Trainline link + 🚆
+      to: lastLeg.to,
+      toLL: lastLeg.toLL,
+      durationMin: run.reduce((s, l) => s + (l.durationMin || 0), 0),
+      line: lines.join(" + ") || first.line || "Train",
+      terminus: lastLeg.terminus || first.terminus,
+      summary: `${cleanName(first.from)} → ${cleanName(lastLeg.to)}`,
+    });
+    i = last + 1;
   }
   return out;
 }
@@ -674,7 +694,7 @@ function priceBreakdown(o) {
         ? `Train: ${money(railcardPence(parts.railPart))} with your railcard applied (${money(parts.railPart)} without). One through-ticket covers the whole train journey.`
         : `Train: ${money(parts.railPart)} off-peak — a railcard saves ~⅓ off this (${money(railcardPence(parts.railPart))}). Buy one through-ticket for the whole train journey.`]);
     } else if (parts.railPart > 0) {
-      rows.push(["🚇", `Tube/Overground: ${money(parts.railPart)} — a zone-based pay-as-you-go estimate.`]);
+      rows.push(["🚇", `Tube/DLR: ${money(parts.railPart)} — a zone-based pay-as-you-go estimate.`]);
     }
     if (parts.busPart > 0) rows.push(["🚌", `Bus: ${money(175)} (Hopper — unlimited buses within an hour).`]);
   }
@@ -754,6 +774,10 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.29", [
+    "The whole train journey now collapses into one section with a single Trainline link — even when you change trains.",
+    "Overground, Elizabeth line and Thameslink now count as trains, so their fare shows and a railcard applies.",
+  ]],
   ["0.28", [
     "Prices show “pp” (per person) when you're travelling as a group.",
     "Pub stop is now a simple on/off — drops in the nearest pub within a 15-min walk.",
