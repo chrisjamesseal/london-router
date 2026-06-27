@@ -20,7 +20,7 @@
       <img src="icon.svg" class="brand-logo-img" alt="" />
       <span>Quickest</span>
     </button>
-    <button class="ver" id="verPill">0.27</button>
+    <button class="ver" id="verPill">0.28</button>
   </header>
 
   <div id="changelog" class="sheet hidden">
@@ -34,7 +34,7 @@
     <div id="splash" class="splash">
       <img src="icon.svg" class="splash-logo" alt="" />
       <h1 class="splash-title">Quickest</h1>
-      <p class="splash-feat">🚲 Bike, Train, Tube, Bus &amp; Cabs</p>
+      <p class="splash-feat">The fastest, cheapest way across London — door to door.</p>
     </div>
     <div id="tabs" class="tabs hidden" role="tablist">
       <button class="tab active" data-sort="fastest" role="tab">
@@ -75,18 +75,15 @@
       </div>
       <div class="ex-line col">
         <span class="ex-h">🍺 Pub Stop</span>
-        <div class="seg full" id="pubSeg">
-          <button type="button" data-pub="" class="on">None</button>
-          <button type="button" data-pub="jubel">🍋 Jubel</button>
-          <button type="button" data-pub="guinness">🖤 Guinness</button>
+        <div class="avoid" id="pubStop">
+          <label data-pub="on"><input type="checkbox" id="pubChk" />🍺 Add a pub stop</label>
         </div>
-        <span class="ex-note">Pubs serving it, up to a 15 min walk off-route (not added to your journey time).</span>
+        <span class="ex-note">Drops in the nearest pub within a 15 min walk (not added to your journey time).</span>
       </div>
       <div class="ex-line col">
         <span class="ex-h">💳 Discounts</span>
         <div class="avoid" id="discounts">
           <label data-disc="railcard"><input type="checkbox" />🚆 Railcard</label>
-          <label data-disc="uberone"><input type="checkbox" />🚗 Uber One</label>
         </div>
       </div>
       <div class="ex-line col">

@@ -53,44 +53,6 @@ const RAIL_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rai
 // Small favicon-style logos via Google's favicon service.
 const favicon = (domain) => `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
 const BRAND_LOGOS = { uber: "uber.com", bolt: "bolt.eu" };
-// Beers & ciders we can show a real logo for. Only used to confirm/label drinks
-// that a pub *actually* lists in OpenStreetMap — never as a generic guess.
-const DRINK_LOGOS = [
-  // beers
-  { key: "guinness", name: "Guinness", domain: "guinness.com" },
-  { key: "stella", name: "Stella Artois", domain: "stellaartois.com" },
-  { key: "camden", name: "Camden Hells", domain: "camdentownbrewery.com" },
-  { key: "moretti", name: "Birra Moretti", domain: "birramoretti.co.uk" },
-  { key: "peroni", name: "Peroni", domain: "peroni.co.uk" },
-  { key: "estrella", name: "Estrella Damm", domain: "estrelladamm.com" },
-  { key: "heineken", name: "Heineken", domain: "heineken.com" },
-  { key: "asahi", name: "Asahi", domain: "asahibeer.co.uk" },
-  { key: "neck oil", name: "Neck Oil", domain: "beavertownbrewery.co.uk" },
-  { key: "beavertown", name: "Beavertown", domain: "beavertownbrewery.co.uk" },
-  { key: "london pride", name: "London Pride", domain: "fullers.co.uk" },
-  { key: "fuller", name: "Fuller's", domain: "fullers.co.uk" },
-  { key: "madri", name: "Madrí", domain: "madriexcepcional.com" },
-  { key: "carling", name: "Carling", domain: "carling.com" },
-  { key: "amstel", name: "Amstel", domain: "amstel.com" },
-  { key: "cruzcampo", name: "Cruzcampo", domain: "cruzcampo.com" },
-  { key: "carlsberg", name: "Carlsberg", domain: "carlsberg.co.uk" },
-  { key: "budweiser", name: "Budweiser", domain: "budweiser.co.uk" },
-  { key: "san miguel", name: "San Miguel", domain: "sanmiguel.co.uk" },
-  { key: "staropramen", name: "Staropramen", domain: "staropramen.com" },
-  // ciders
-  { key: "strongbow", name: "Strongbow", domain: "strongbow.co.uk" },
-  { key: "thatcher", name: "Thatchers", domain: "thatcherscider.co.uk" },
-  { key: "aspall", name: "Aspall", domain: "aspall.co.uk" },
-  { key: "magners", name: "Magners", domain: "magners.co.uk" },
-  { key: "kopparberg", name: "Kopparberg", domain: "kopparberg.co.uk" },
-  { key: "rekorderlig", name: "Rekorderlig", domain: "rekorderlig.com" },
-  { key: "inch", name: "Inch's", domain: "inchescider.com" },
-  { key: "bulmers", name: "Bulmers", domain: "bulmers.ie" },
-];
-const drinkMatch = (text) => {
-  const n = (text || "").toLowerCase();
-  return DRINK_LOGOS.find((d) => n.includes(d.key)) || null;
-};
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -234,16 +196,9 @@ $("#whenSeg")
     };
   });
 
-// Pub-on-route brand filter: "" | "jubel" | "guinness".
-let pubBrand = "";
-$("#pubSeg")
-  .querySelectorAll("button")
-  .forEach((b) => {
-    b.onclick = () => {
-      pubBrand = b.dataset.pub;
-      $("#pubSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
-    };
-  });
+// Pub-on-route stop: a simple on/off checkbox.
+let pubStop = false;
+$("#pubChk").onchange = (e) => { pubStop = e.target.checked; };
 
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
@@ -295,12 +250,7 @@ async function findPub(lat, lon) {
     const best = pubs.map((e) => ({ e, d: metres(e) })).sort((a, b) => a.d - b.d)[0];
     const e = best.e, t = e.tags;
     const addr = [t["addr:housenumber"], t["addr:street"], t["addr:postcode"]].filter(Boolean).join(" ");
-    const drinks = [];
-    for (const k of ["brand", "brewery", "drink:beer", "drink:cider"]) {
-      const v = t[k];
-      if (v && v !== "yes") drinks.push(...v.split(";").map((s) => s.trim()));
-    }
-    return { name: t.name, lat: e.lat, lon: e.lon, addr, drinks, metres: Math.round(best.d) };
+    return { name: t.name, lat: e.lat, lon: e.lon, addr, metres: Math.round(best.d) };
   } catch {
     return null;
   } finally {
@@ -522,37 +472,55 @@ function setTab(sort) {
 
 function readDiscounts() {
   const on = new Set([...document.querySelectorAll("#discounts input:checked")].map((i) => i.closest("label").dataset.disc));
-  return { railcard: on.has("railcard"), uberOne: on.has("uberone") };
+  return { railcard: on.has("railcard") };
 }
+
+// Split a route's cost into its parts so a railcard only discounts the *train*
+// fare (not the bike hire, tube or bus). Returns pence amounts.
+function fareParts(o) {
+  const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
+  const bike = o.legs.find((l) => l.mode === "cycle");
+  const bikePart = bike ? bikePricing(Math.round(bike.durationMin)).pence : 0;
+  const transit = isCab ? 0 : Math.max(0, o.costPence - bikePart);
+  const busPart = o.legs.some((l) => l.mode === "bus") ? Math.min(175, transit) : 0;
+  const railPart = Math.max(0, transit - busPart); // tube/train portion
+  return { isCab, bikePart, transit, busPart, railPart };
+}
+
 // What a route actually costs to show, after discounts. Returns {pence, prefix, railHint}.
 function priceOf(o) {
   const d = readDiscounts();
-  const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
+  const parts = fareParts(o);
   const trainy = hasTrain(o.legs);
   let pence = o.costPence;
-  if (d.uberOne && o.brand === "uber") pence = Math.round(pence * 0.9); // Uber One ≈ member saving
   let railHint = "";
   if (trainy && !o.synthetic) {
-    if (d.railcard) { pence = railcardPence(pence); railHint = `<small class="rail">railcard ✓</small>`; }
-    else railHint = `<small class="rail">${money(railcardPence(o.costPence))} w/ railcard</small>`;
+    // Railcard takes ~1/3 off the train fare only — leave bike/tube/bus alone.
+    const saving = parts.railPart - railcardPence(parts.railPart);
+    if (d.railcard) { pence -= saving; railHint = `<small class="rail">railcard ✓</small>`; }
+    else railHint = `<small class="rail">${money(o.costPence - saving)} w/ railcard</small>`;
   }
-  return { pence, prefix: isCab ? "&lt;" : "", railHint }; // "<" = estimated, up-to fare
+  return { pence, prefix: parts.isCab ? "&lt;" : "", railHint }; // "<" = estimated, up-to fare
 }
 
 // Time/price block reused by the list cards and the single-route page.
 function summaryHTML(o) {
   const timeBlock = `<div class="time">${fmtMin(o.durationMin)}</div>`;
   const { pence, prefix, railHint } = priceOf(o);
-  // Cabs split between travellers: per-person big, total underneath.
-  let priceMain = prefix + money(pence);
-  let priceSub = "";
-  if (o.brand && peopleCount > 1) {
-    priceMain = prefix + money(Math.round(pence / peopleCount));
+  // Show "pp" (per person) whenever there's more than one traveller. Cabs split
+  // the fare — per-person big, total underneath; transit fares are already pp.
+  const pp = peopleCount > 1 && pence > 0;
+  const ppTag = pp ? ` <small class="pp">pp</small>` : "";
+  let priceMain, priceSub = "";
+  if (o.brand && pp) {
+    priceMain = prefix + money(Math.round(pence / peopleCount)) + ppTag;
     priceSub = `${prefix}${money(pence)} total`;
+  } else {
+    priceMain = prefix + money(pence) + ppTag;
   }
   // Pub icon (no name) appears in the summary; the name shows on the route page.
   const legChips = o.legs.map(legChip);
-  if (pubBrand && !o.synthetic) {
+  if (pubStop && !o.synthetic) {
     let idx = o.legs.findIndex((l) => BOARD_MODES.includes(l.mode));
     legChips.splice(idx < 0 ? legChips.length : idx, 0, '<span class="leg pub"><span class="ic">🍺</span></span>');
   }
@@ -647,7 +615,7 @@ function mergeTrainLegs(legs) {
 // Open the single-route page: own screen, map at top (scrolls), steps below.
 function openDetail(o) {
   const data = lastResult;
-  const pubOn = !!pubBrand && !o.synthetic;
+  const pubOn = pubStop && !o.synthetic;
 
   // Anchor to the entered start/end (links use those names). The final leg
   // becomes "Walk to <end>" so we don't need a separate Start/End row.
@@ -686,35 +654,29 @@ function openDetail(o) {
 function priceBreakdown(o) {
   const { pence, prefix } = priceOf(o);
   const d = readDiscounts();
+  const parts = fareParts(o);
   const rows = []; // [emoji, html]
 
   const bike = o.legs.find((l) => l.mode === "cycle");
-  let bikePart = 0;
   if (bike) {
     const m = Math.round(bike.durationMin);
     const p = bikePricing(m);
-    bikePart = p.pence;
     rows.push(["🍋‍🟩", p.pass
-      ? `Lime: a ${p.passMins}-min pass is cheapest here — ${money(bikePart)} for ${m} min riding.`
-      : `Lime: pay-as-you-go (£1 unlock + 29p/min) is ${money(bikePart)} for ${m} min riding.`]);
+      ? `Lime: a ${p.passMins}-min pass is cheapest here — ${money(parts.bikePart)} for ${m} min riding.`
+      : `Lime: pay-as-you-go (£1 unlock + 29p/min) is ${money(parts.bikePart)} for ${m} min riding.`]);
   }
 
-  const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
-  if (isCab) {
+  if (parts.isCab) {
     rows.push(["🚗", `${cap(o.brand || "Cab")} fare is an upper estimate (the “&lt;”); you pay the live metered price in the app.`]);
   } else {
-    // The transit portion is whatever's left after the bike hire.
-    const transit = Math.max(0, o.costPence - bikePart);
-    const hasBus = o.legs.some((l) => l.mode === "bus");
-    const railPart = Math.max(0, transit - (hasBus ? 175 : 0));
     if (hasTrain(o.legs)) {
       rows.push(["🚆", d.railcard
-        ? `Train: ${money(railcardPence(railPart))} with your railcard applied (${money(railPart)} without). One through-ticket covers the whole train journey.`
-        : `Train: ${money(railPart)} off-peak — a railcard saves ~⅓ (${money(railcardPence(railPart))}). Buy one through-ticket for the whole train journey.`]);
-    } else if (railPart > 0) {
-      rows.push(["🚇", `Tube/Overground: ${money(railPart)} — a zone-based pay-as-you-go estimate.`]);
+        ? `Train: ${money(railcardPence(parts.railPart))} with your railcard applied (${money(parts.railPart)} without). One through-ticket covers the whole train journey.`
+        : `Train: ${money(parts.railPart)} off-peak — a railcard saves ~⅓ off this (${money(railcardPence(parts.railPart))}). Buy one through-ticket for the whole train journey.`]);
+    } else if (parts.railPart > 0) {
+      rows.push(["🚇", `Tube/Overground: ${money(parts.railPart)} — a zone-based pay-as-you-go estimate.`]);
     }
-    if (hasBus) rows.push(["🚌", `Bus: ${money(175)} (Hopper — unlimited buses within an hour).`]);
+    if (parts.busPart > 0) rows.push(["🚌", `Bus: ${money(175)} (Hopper — unlimited buses within an hour).`]);
   }
 
   if (!rows.length) return "";
@@ -729,12 +691,6 @@ function closeDetail() {
   document.body.classList.remove("detail-open");
 }
 
-// Official brand pub-finders to link out to.
-const PUB_FINDERS = {
-  jubel: { name: "Jubel", url: "https://jubel.co/", emoji: "🍋" },
-  guinness: { name: "Guinness", url: "https://www.guinness.com/en-gb/pub-finder", emoji: "🖤" },
-};
-
 // Pub within a 15-min walk of where this route boards; drop it into its step + map.
 async function loadPub(o) {
   const step = $("#detailContent .pub-step");
@@ -747,26 +703,13 @@ async function loadPub(o) {
   if (!o._pub) o._pub = (await findPub(board.lat, board.lon)) || { name: null };
   const body = step.querySelector(".step-body");
   const pub = o._pub;
-  const f = PUB_FINDERS[pubBrand] || PUB_FINDERS.guinness;
   if (!pub.name) return (body.innerHTML = '<div class="pub-name">No pub within a 15-min walk</div>');
   emojiMarker(pub.lat, pub.lon, "🍺", pub.name).addTo(layers); // show on the map
-  const seen = new Set();
-  const drinks = [];
-  for (const d of pub.drinks || []) {
-    const m = drinkMatch(d);
-    if (m && !seen.has(m.name)) { seen.add(m.name); drinks.push(m); }
-  }
-  const beers = drinks
-    .slice(0, 8)
-    .map((m) => `<li><img class="beer-logo" src="${favicon(m.domain)}" alt=""> ${m.name}</li>`)
-    .join("");
   const query = encodeURIComponent([pub.name, pub.addr].filter(Boolean).join(", "));
   const gmaps = `https://www.google.com/maps/search/?api=1&query=${query}`;
   body.innerHTML = `
     <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
-    <div class="step-sub">${walkMin(pub.metres || 0)} min walk from the station</div>
-    ${beers ? `<ul class="pub-beers">${beers}</ul>` : ""}
-    <a class="pub-find" href="${f.url}" target="_blank" rel="noopener">${f.emoji} Find ${f.name} pubs ↗</a>`;
+    <div class="step-sub">${walkMin(pub.metres || 0)} min walk from the station</div>`;
 }
 
 // Tabs: Fastest / Cheapest re-rank the list; Custom shows the controls.
@@ -793,8 +736,8 @@ function resetApp() {
   $("#tabs").classList.add("hidden");
   document.body.classList.remove("has-results");
   closeDetail();
-  pubBrand = "";
-  $("#pubSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.pub === ""));
+  pubStop = false;
+  $("#pubChk").checked = false;
   $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
   $("#discounts").querySelectorAll("input").forEach((i) => (i.checked = false));
   peopleCount = 1;
@@ -811,6 +754,12 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.28", [
+    "Prices show “pp” (per person) when you're travelling as a group.",
+    "Pub stop is now a simple on/off — drops in the nearest pub within a 15-min walk.",
+    "Railcard now only discounts the train portion of a fare, and train prices add up correctly.",
+    "Tidied the splash screen and removed the Uber One option.",
+  ]],
   ["0.27", [
     "Tap the Uber/Bolt pill on a card to open the app — it's now a proper button.",
     "Lime opens from the bike step on the route page (its icon replaces the map icon there).",

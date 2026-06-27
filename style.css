@@ -100,7 +100,9 @@ body {
 .backtime { font-size: 14px; font-weight: 700; color: var(--muted); margin-top: 2px; }
 .price { font-size: 19px; font-weight: 800; color: var(--brand); text-align: right; }
 .price small { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); }
-.price small.rail { color: var(--accent-dark); font-weight: 700; }
+/* "pp" sits inline right after the price, not on its own line */
+.price small.pp { display: inline; font-size: 12px; font-weight: 700; color: var(--brand); }
+.price small.rail { color: var(--accent-dark); font-weight: 700; margin-top: 4px; padding-bottom: 2px; }
 .label { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px; color: var(--muted); margin: 3px 0 9px; }
 .brand-logo { width: 18px; height: 18px; border-radius: 4px; flex: 0 0 auto; }
 .pill-logo { width: 15px; height: 15px; border-radius: 3px; flex: 0 0 auto; }
@@ -145,12 +147,6 @@ body {
   display: inline-block; font-weight: 800; font-size: 14px; color: #7a5b00; text-decoration: none;
 }
 .pub-name:active { opacity: .7; }
-.pub-beers { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.pub-beers li {
-  display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink);
-  background: var(--bg); border-radius: 9px; padding: 5px 9px;
-}
-.beer-logo { width: 18px; height: 18px; border-radius: 4px; flex: 0 0 auto; }
 
 /* bottom search bar — placed within thumb's reach */
 .bar {
@@ -227,7 +223,8 @@ body.has-results .field input { padding: 11px 4px; }
 .avoid input { position: absolute; opacity: 0; width: 0; height: 0; }
 #avoid label:has(input:checked) { background: #ffe6e1; border-color: #e0533d; color: #c0392b; }
 #avoid label:has(input:checked)::before { content: "✕ "; font-weight: 800; }
-#discounts label:has(input:checked) { background: #e7f0fd; border-color: var(--brand); color: var(--brand); }
+#discounts label:has(input:checked),
+#pubStop label:has(input:checked) { background: #e7f0fd; border-color: var(--brand); color: var(--brand); }
 
 /* card spacing: tighter top, more room under the time */
 .card-head { padding: 11px 15px 13px; }
@@ -251,13 +248,12 @@ body.has-results .field input { padding: 11px 4px; }
 .cl-list { margin: 0; padding-left: 18px; }
 .cl-list li { font-size: 13px; line-height: 1.5; }
 .step-ic-img { width: 20px; height: 20px; border-radius: 5px; display: block; }
-.pub-find { display: inline-block; margin-top: 7px; font-size: 12.5px; font-weight: 700; color: var(--brand); text-decoration: none; }
 .smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
 
 /* splash (first screen, before any search) — sits lower, fits one screen */
 .splash {
   position: relative; flex: 1 1 auto; overflow: hidden;
-  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; padding: 24px 22px 30px; gap: 4px;
 }
 /* faint, label-free central-London map texture behind the splash */
