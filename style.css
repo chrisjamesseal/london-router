@@ -212,18 +212,25 @@ body.has-results .ac { display: none; } /* never overlap the results list */
 
 /* splash (first screen, before any search) */
 .splash {
-  flex: 1 1 auto; overflow-y: auto;
+  position: relative; flex: 1 1 auto; overflow-y: auto;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; padding: 24px 22px; gap: 4px;
 }
+/* faint map texture behind the splash */
+.splash::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; opacity: 0.3; pointer-events: none;
+  background: url("https://mt0.google.com/vt/lyrs=m&x=1023&y=681&z=11") center/cover no-repeat;
+}
+.splash > * { position: relative; z-index: 1; }
 body.has-results .splash { display: none; }
 .splash-logo { width: 74px; height: 74px; border-radius: 18px; box-shadow: var(--shadow); }
 .splash-title { margin: 12px 0 0; font-size: 27px; font-weight: 800; letter-spacing: -.02em; }
-.splash-sub { margin: 0 0 12px; color: var(--muted); font-weight: 600; }
-.splash-feats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-width: 330px; width: 100%; }
+.splash-sub { margin: 0 0 14px; color: var(--muted); font-weight: 600; }
+.splash-feats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 330px; }
 .splash-feats li {
   background: var(--card); border-radius: 13px; box-shadow: var(--shadow);
-  padding: 12px 14px; font-size: 13.5px; font-weight: 600; text-align: left; line-height: 1.35;
+  padding: 12px 14px; font-size: 14px; font-weight: 600; line-height: 1.2;
+  display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
 }
 
 /* inline pub-stop + people controls (always visible above Find Route) */
