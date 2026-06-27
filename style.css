@@ -31,7 +31,7 @@ body {
   position: fixed; inset: 0; z-index: 800; background: var(--bg);
   overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
-#detail.hidden { display: none; }
+#detail.hidden { display: none !important; }
 #detail #map { height: 46vh; min-height: 220px; z-index: 0; }
 .detailpage {
   padding: 12px 12px calc(20px + env(safe-area-inset-bottom));
@@ -309,7 +309,7 @@ body.has-results .splash { display: none; }
   font-size: 14px; font-weight: 600; box-shadow: var(--shadow); z-index: 999;
   max-width: 86vw; text-align: center;
 }
-.hidden { display: none; }
+.hidden { display: none !important; }
 .spin { display:inline-block; width:14px;height:14px;border:2px solid #fff5;border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:8px;}
 @keyframes s { to { transform: rotate(360deg);} }
 
