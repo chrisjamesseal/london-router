@@ -288,6 +288,12 @@ async function plan() {
   document.body.classList.remove("has-results");
   $("#acFrom").classList.add("hidden");
   $("#acTo").classList.add("hidden");
+  // Safety net: never let the full-screen splash hang if a request stalls.
+  const watchdog = setTimeout(() => {
+    stopLoading();
+    status("That took too long — check your connection and try again", false);
+    setTimeout(() => status("", false), 5000);
+  }, 20000);
   try {
     const [origin, dest, bays, stations] = await Promise.all([
       resolve($("#from")),
@@ -303,11 +309,12 @@ async function plan() {
     // show even if the transit engine returned nothing (e.g. everything avoided).
     lastResult = data;
     render(data);
-    stopLoading();
   } catch (e) {
-    stopLoading();
     status(e.message || "Planning failed", false);
     setTimeout(() => status("", false), 4000);
+  } finally {
+    clearTimeout(watchdog);
+    stopLoading();
   }
 }
 

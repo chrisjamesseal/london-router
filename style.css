@@ -197,9 +197,14 @@ body.has-results .field input { padding: 11px 4px; }
 
 /* slim app header with the logo, links back to home */
 .apphead {
-  flex: 0 0 auto; display: flex; align-items: center;
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
   padding: max(6px, env(safe-area-inset-top)) 14px 6px;
   background: var(--card); border-bottom: 1px solid var(--line);
+}
+.ver {
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--line);
+  padding: 2px 8px; border-radius: 99px;
 }
 .brand {
   display: inline-flex; align-items: center; gap: 8px;
