@@ -15,6 +15,26 @@ L.tileLayer("https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
 }).addTo(map);
 L.control.zoom({ position: "topright" }).addTo(map);
 
+// "Reset map" control — re-fit to the route preview after zooming/panning.
+let lastRoutePts = null;
+function resetMapView() {
+  if (lastRoutePts && lastRoutePts.length) map.fitBounds(L.latLngBounds(lastRoutePts).pad(0.25));
+}
+const ResetControl = L.Control.extend({
+  options: { position: "bottomleft" },
+  onAdd() {
+    const b = L.DomUtil.create("button", "map-reset");
+    b.type = "button";
+    b.innerHTML = "⤢ Reset map";
+    L.DomEvent.on(b, "click", (e) => {
+      L.DomEvent.stop(e);
+      resetMapView();
+    });
+    return b;
+  },
+});
+map.addControl(new ResetControl());
+
 let layers = L.layerGroup().addTo(map);
 let lastResult = null;
 let sortBy = "fastest"; // "fastest" | "cheapest"
@@ -608,6 +628,7 @@ function drawRoute(data, o) {
   pts.push([D.lat, D.lon]);
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
   L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);
+  lastRoutePts = pts;
   map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
 

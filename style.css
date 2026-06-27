@@ -46,6 +46,13 @@ body {
   font-family: inherit; font-weight: 700; font-size: 14px;
   padding: 9px 15px; border-radius: 99px; box-shadow: var(--shadow); cursor: pointer;
 }
+/* reset-map control (Leaflet, bottom-left of the map) */
+.map-reset {
+  border: 0; background: var(--card); color: var(--ink);
+  font-family: inherit; font-weight: 700; font-size: 13px;
+  padding: 8px 13px; border-radius: 99px; box-shadow: var(--shadow); cursor: pointer;
+}
+.map-reset:active { background: var(--bg); }
 
 /* Skyscanner-style sort tabs */
 .tabs {
@@ -196,8 +203,8 @@ body {
 .stepper button:active { background: var(--bg); }
 #peopleVal { min-width: 16px; text-align: center; font-weight: 800; font-size: 16px; }
 
-/* Once results are on screen, free up vertical space for the list. */
-body.has-results .extras { display: none; }
+/* Once results are on screen, free up vertical space for the list. The Extras
+   stay available (collapsed) so they can be edited after a search. */
 body.has-results .bar { padding-top: 9px; }
 body.has-results .inputs { gap: 7px; }
 body.has-results .field input { padding: 11px 4px; }
