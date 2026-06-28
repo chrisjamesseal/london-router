@@ -1225,6 +1225,9 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.33", [
+    "Station fare zones can now be refreshed from TfL's full station list, so zone-based fares cover the whole network accurately.",
+  ]],
   ["0.32", [
     "Lime fares now show their workings: pay-as-you-go (£1 + 29p/min) vs a 30-min pass, whichever is cheaper — with a tip when one pass also covers your return.",
     "Tube/rail zones now come from a station lookup (more accurate than the distance estimate), falling back to the estimate for any station not yet listed.",
