@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=30" />
 </head>
 <body>
   <header class="apphead">
@@ -20,7 +20,7 @@
       <img src="icon.svg" class="brand-logo-img" alt="" />
       <span>Quickest</span>
     </button>
-    <button class="ver" id="verPill">0.29</button>
+    <button class="ver" id="verPill">0.30</button>
   </header>
 
   <div id="changelog" class="sheet hidden">
@@ -87,14 +87,23 @@
         </div>
       </div>
       <div class="ex-line col">
+        <span class="ex-h">♿ Accessibility</span>
+        <div class="avoid" id="access">
+          <label data-acc="stepfree"><input type="checkbox" />♿ Step-free only</label>
+          <label data-acc="nostairs"><input type="checkbox" />🚶 Avoid stairs</label>
+        </div>
+        <span class="ex-note">Routes via step-free stations where TfL confirms them. Saved for next time.</span>
+      </div>
+      <div class="ex-line col">
         <span class="ex-h">🚫 Avoid</span>
         <div class="avoid" id="avoid">
-          <label data-mode="bike"><input type="checkbox" data-mode="bike" />🚲 Bike</label>
-          <label data-mode="tube"><input type="checkbox" data-mode="tube" />🚇 Tube</label>
-          <label data-mode="train"><input type="checkbox" data-mode="train" />🚆 Train</label>
-          <label data-mode="bus"><input type="checkbox" data-mode="bus" />🚌 Bus</label>
-          <label data-mode="cab"><input type="checkbox" data-mode="cab" />🚗 Cabs</label>
+          <label data-mode="bike"><input type="checkbox" data-mode="bike" />🚲 Bike<span class="avoid-delta"></span></label>
+          <label data-mode="tube"><input type="checkbox" data-mode="tube" />🚇 Tube<span class="avoid-delta"></span></label>
+          <label data-mode="train"><input type="checkbox" data-mode="train" />🚆 Train<span class="avoid-delta"></span></label>
+          <label data-mode="bus"><input type="checkbox" data-mode="bus" />🚌 Bus<span class="avoid-delta"></span></label>
+          <label data-mode="cab"><input type="checkbox" data-mode="cab" />🚗 Cabs<span class="avoid-delta"></span></label>
         </div>
+        <span class="ex-note">Toggling a mode previews its time/cost impact before you tap Update.</span>
       </div>
       <p class="custom-hint">Tap <b>Update</b> to apply.</p>
     </div>
@@ -145,6 +154,6 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=30"></script>
 </body>
 </html>

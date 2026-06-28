@@ -3,6 +3,12 @@
 import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
 import { railcardPence, bikePricing } from "./lib/fares.js";
+import { arrivals, lineStatus } from "./lib/tfl.js";
+
+// --- STAGING build state (live countdowns / disruption polling) ------------
+let detailTimers = []; // intervals to clear when leaving the route page
+let lastDetailOption = null; // the option currently shown on the route page
+const ACCESS_KEY = "quickest.accessibility"; // persisted B3 preference
 
 const $ = (s) => document.querySelector(s);
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
@@ -58,8 +64,18 @@ const BRAND_LOGOS = { uber: "uber.com", bolt: "bolt.eu" };
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
-let baysPromise = fetch("./data/bays.json").then((r) => r.json());
-let stationsPromise = fetch("./data/stations.json").then((r) => r.json());
+// Resilient JSON loader: a failed/garbled response surfaces as a clean rejection
+// (handled by plan's error state) rather than an unhandled "json parse" crash.
+function loadJSON(url) {
+  const p = fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`${url} ${r.status}`);
+    return r.json();
+  });
+  p.catch(() => {}); // mark handled so it never fires an unhandledrejection at load
+  return p;
+}
+let baysPromise = loadJSON("./data/bays.json");
+let stationsPromise = loadJSON("./data/stations.json");
 
 // Official TfL line colours, keyed by lower-cased line name ("… line" trimmed).
 const LINE_COLORS = {
@@ -205,6 +221,27 @@ $("#pubChk").onchange = (e) => { pubStop = e.target.checked; };
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
 
+// Accessibility (B3): map the toggles to TfL accessibilityPreference values.
+// Persisted because it's usually a fixed need, not a per-trip choice.
+const ACCESS_MAP = { stepfree: "StepFreeToVehicle", nostairs: "NoStairs" };
+function readAccess() {
+  return [...document.querySelectorAll("#access input:checked")].map((i) => i.closest("label").dataset.acc);
+}
+function accessPreference() {
+  return readAccess().map((k) => ACCESS_MAP[k]).filter(Boolean).join(",");
+}
+function saveAccess() {
+  try { localStorage.setItem(ACCESS_KEY, JSON.stringify(readAccess())); } catch {}
+}
+function restoreAccess() {
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem(ACCESS_KEY) || "[]"); } catch {}
+  document.querySelectorAll("#access label").forEach((l) => {
+    const cb = l.querySelector("input");
+    if (cb) cb.checked = saved.includes(l.dataset.acc);
+  });
+}
+
 // Build engine options from the Custom controls.
 function extrasOpts() {
   const avoid = avoidedModes();
@@ -217,6 +254,8 @@ function extrasOpts() {
     return true;
   });
   const o = { transitModes, allowBike: !avoid.has("bike"), allowCab: !avoid.has("cab") };
+  const acc = accessPreference();
+  if (acc) o.accessibilityPreference = acc;
   if (whenMode !== "now" && $("#whenTime").value) {
     const [d, t] = $("#whenTime").value.split("T");
     o.date = d.replaceAll("-", "");
@@ -260,45 +299,119 @@ async function findPub(lat, lon) {
   }
 }
 
+// C3: render a recoverable state into the results area (no silent blank screens).
+// kind: loading | empty | error | offline | location | invalid
+function showState(kind, opts = {}) {
+  const wrap = $("#results");
+  document.body.classList.add("has-results"); // keep the results panel on screen
+  $("#tabs").classList.add("hidden");
+  $("#custom").classList.add("hidden");
+  wrap.classList.remove("hidden");
+  if (kind === "loading") {
+    wrap.innerHTML =
+      '<div class="state-skel" aria-hidden="true">' +
+      Array.from({ length: 4 }).map(() =>
+        '<div class="skel-card"><div class="skel-line w40"></div><div class="skel-line w70"></div><div class="skel-pills"><span></span><span></span><span></span></div></div>'
+      ).join("") +
+      '</div><p class="sr-only" role="status">Finding routes…</p>';
+    return;
+  }
+  const ICON = { empty: "🧭", error: "⚠️", offline: "📡", location: "📍", invalid: "✏️" }[kind] || "ℹ️";
+  const actions = (opts.actions || [])
+    .map((a, i) => `<button class="state-act" data-act="${i}">${a.label}</button>`)
+    .join("");
+  wrap.innerHTML = `
+    <div class="state-card" role="alert" aria-live="assertive">
+      <div class="state-ic">${ICON}</div>
+      <div class="state-title">${opts.title || ""}</div>
+      ${opts.body ? `<div class="state-body">${opts.body}</div>` : ""}
+      ${actions ? `<div class="state-actions">${actions}</div>` : ""}
+    </div>`;
+  (opts.actions || []).forEach((a, i) => {
+    const b = wrap.querySelector(`[data-act="${i}"]`);
+    if (b) b.onclick = a.onClick;
+  });
+}
+
+let lastQuery = null; // for the Retry action
+
 async function plan() {
   const originStr = $("#from").value.trim();
   const destStr = $("#to").value.trim();
-  if (!originStr || !destStr) return status("Enter both From and To", false);
+  // C3 invalid input — flag the empty field inline.
+  if (!originStr || !destStr) {
+    if (!originStr) flagField("from");
+    if (!destStr) flagField("to");
+    return showState("invalid", {
+      title: "Add a start and a destination",
+      body: "Enter both a From and a To — an address, postcode or station.",
+    });
+  }
+  // C3 offline — don't even try; surface the last route if we have one.
+  if (navigator.onLine === false) {
+    return showState("offline", {
+      title: "You're offline",
+      body: "Quickest needs a connection to plan a route." + (lastResult ? " Showing your last route below." : ""),
+      actions: [{ label: "Retry", onClick: () => plan() }],
+    });
+  }
+  lastQuery = { originStr, destStr };
   startLoading();
-  $("#results").innerHTML = "";
-  $("#tabs").classList.add("hidden");
+  showState("loading");
   closeDetail();
-  document.body.classList.remove("has-results");
   $("#acFrom").classList.add("hidden");
   $("#acTo").classList.add("hidden");
-  // Safety net: never let the full-screen splash hang if a request stalls.
   const watchdog = setTimeout(() => {
     stopLoading();
-    status("That took too long — check your connection and try again", false);
-    setTimeout(() => status("", false), 5000);
+    showState("error", {
+      title: "That took too long",
+      body: "TfL didn't respond in time. Check your connection and try again.",
+      actions: [{ label: "Retry", onClick: () => plan() }],
+    });
   }, 20000);
   try {
+    const opts = extrasOpts();
     const [origin, dest, bays, stations] = await Promise.all([
       resolve($("#from")),
       resolve($("#to")),
       baysPromise,
       stationsPromise,
     ]);
-    if (!origin) throw new Error(`Couldn't find "${originStr}"`);
-    if (!dest) throw new Error(`Couldn't find "${destStr}"`);
-    const data = await runPlan(origin, dest, bays, { stations, ...extrasOpts() });
+    if (!origin) return planInvalid(originStr);
+    if (!dest) return planInvalid(destStr);
+    const data = await runPlan(origin, dest, bays, { stations, ...opts });
     data._noCab = avoidedModes().has("cab");
-    // Cab and walk options are always synthesised, so there's always a route to
-    // show even if the transit engine returned nothing (e.g. everything avoided).
     lastResult = data;
     render(data);
   } catch (e) {
-    status(e.message || "Planning failed", false);
-    setTimeout(() => status("", false), 4000);
+    // Distinguish a network/TfL outage from "no route".
+    const offline = navigator.onLine === false;
+    console.warn("plan failed:", e);
+    showState(offline ? "offline" : "error", {
+      title: offline ? "Connection lost" : "Couldn't reach TfL",
+      body: offline ? "You appear to be offline — check your connection and try again." : "Something went wrong planning your route. Please try again.",
+      actions: [{ label: "Retry", onClick: () => plan() }],
+    });
   } finally {
     clearTimeout(watchdog);
     stopLoading();
   }
+}
+
+function planInvalid(text) {
+  stopLoading();
+  showState("invalid", {
+    title: `Couldn't find “${text}”`,
+    body: "Try a more specific address, postcode or station name.",
+  });
+}
+
+// Inline field validation flash (C3).
+function flagField(id) {
+  const f = $("#" + id).closest(".field");
+  if (!f) return;
+  f.classList.add("invalid");
+  $("#" + id).addEventListener("input", () => f.classList.remove("invalid"), { once: true });
 }
 
 // Drop the redundant "Station" wording and tidy ALL-CAPS (LONDON → London).
@@ -443,11 +556,25 @@ function estimates(data) {
 }
 
 function render(data) {
-  const tabs = $("#tabs");
-  tabs.classList.toggle("hidden", !data.options.length);
-  document.body.classList.toggle("has-results", data.options.length > 0);
-  $("#go").textContent = data.options.length ? "Update" : "Find Best and Cheapest Routes";
   data._syn = estimates(data);
+  const cabsAvail = !data._noCab;
+  // C3 no-results: engine found nothing and there's no cab fallback either.
+  if (!data.options.length && !cabsAvail) {
+    $("#go").textContent = "Update";
+    const avoids = [...$("#avoid").querySelectorAll("input:checked")];
+    return showState("empty", {
+      title: "No route with these filters",
+      body: "Your Avoid / Accessibility filters ruled everything out. Try relaxing them.",
+      actions: [
+        avoids.length ? { label: "Clear avoids", onClick: () => { avoids.forEach((i) => (i.checked = false)); updateAvoidPreviews(); plan(); } } : null,
+        { label: "Allow cabs", onClick: () => { const c = $('#avoid input[data-mode="cab"]'); if (c) c.checked = false; plan(); } },
+      ].filter(Boolean),
+    });
+  }
+  const tabs = $("#tabs");
+  tabs.classList.remove("hidden");
+  document.body.classList.add("has-results");
+  $("#go").textContent = "Update";
   const cabs = data._noCab ? [] : [data._syn.uber, data._syn.bolt];
   const movers = [...data.options, ...cabs];
   const byTime = [...movers].sort((a, b) => a.durationMin - b.durationMin);
@@ -632,14 +759,112 @@ function mergeTrainLegs(legs) {
   return out;
 }
 
-// Open the single-route page: own screen, map at top (scrolls), steps below.
+// --- A2: rich itinerary ----------------------------------------------------
+const TRANSIT_LEG = (l) => RAIL_MODES.includes(l.mode) || l.mode === "bus";
+function legIcon(leg) {
+  if (leg.mode === "walking") return "🚶";
+  if (leg.mode === "cycle") return "🍋‍🟩";
+  if (leg.mode === "car") return "🚗";
+  if (leg.mode === "bus") return "🚌";
+  if (leg.mode === "dlr") return "🚈";
+  if (leg.mode === "tram") return "🚊";
+  if (leg.mode === "tube") return "🚇";
+  return "🚆"; // national-rail / overground / elizabeth / thameslink
+}
+const fmtClock = (d) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+// Departure/arrival clock times for the summary header.
+function clockTimes(o) {
+  const dur = (o.durationMin || 0) * 60000;
+  let dep, arr;
+  if (whenMode !== "now" && $("#whenTime").value) {
+    const t = new Date($("#whenTime").value);
+    if (whenMode === "arrive") { arr = t; dep = new Date(+t - dur); }
+    else { dep = t; arr = new Date(+t + dur); }
+  } else { dep = new Date(); arr = new Date(Date.now() + dur); }
+  return { dep, arr };
+}
+const countChanges = (legs) => Math.max(0, legs.filter(TRANSIT_LEG).length - 1);
+
+// One leg of the itinerary, with line-colour accent, board/alight, walk time,
+// a live-countdown slot (first transit leg) and an expandable stop list.
+function legCard(leg, idx, firstTransitIdx) {
+  const n = Math.round(leg.durationMin);
+  const isTransit = TRANSIT_LEG(leg);
+  const color = isTransit ? lineColor(leg) : "#9aa7b2";
+  let title, sub = "";
+  if (leg.mode === "walking") {
+    title = leg.toDest ? `Walk to ${cleanName(leg.to).split(",")[0]}` : `Walk · ${fmtMin(n)}`;
+    sub = leg.toDest ? "" : leg.to ? `to ${cleanName(leg.to).split(",")[0]}` : "";
+  } else if (leg.mode === "cycle") {
+    title = `Cycle · ${fmtMin(n)}`;
+    sub = leg.to ? `to ${cleanName(leg.to)}` : "";
+  } else if (leg.mode === "car") {
+    title = `${cap(leg.brand || "Cab")} · ${fmtMin(n)}`;
+    sub = leg.to ? `to ${cleanName(leg.to)}` : "";
+  } else {
+    title = `${leg.line || cap(leg.mode)} · ${fmtMin(n)}`;
+    sub = leg.from && leg.to ? `${cleanName(leg.from)} → ${cleanName(leg.to)}` : cleanName(leg.summary || "");
+  }
+  const bound = RAIL_MODES.includes(leg.mode) ? compassBound(leg) : "";
+  const towards = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : "";
+  const extra = [bound, towards].filter(Boolean).join(" · ");
+  const cd = idx === firstTransitIdx
+    ? `<div class="leg-countdown" data-leg="${idx}"><span class="spin sm"></span> live times…</div>` : "";
+  const disr = isTransit && leg.lineId
+    ? `<div class="leg-disr" data-line="${leg.lineId}" hidden></div>` : "";
+  const stops = leg.stops && leg.stops.length > 2
+    ? `<details class="leg-stops"><summary>${leg.stops.length} stops</summary><ol>${leg.stops.map((s) => `<li>${s}</li>`).join("")}</ol></details>` : "";
+  return `<li class="legc" style="--acc:${color}">
+    <span class="legc-ic" style="background:${color};color:${textOn(color)}">${legIcon(leg)}</span>
+    <div class="legc-body">
+      <div class="legc-title">${title}</div>
+      ${sub ? `<div class="legc-sub">${sub}</div>` : ""}
+      ${extra ? `<div class="legc-extra">${extra}</div>` : ""}
+      ${cd}${disr}${stops}
+    </div>
+  </li>`;
+}
+
+// A4: cost breakdown per leg and per traveller, with capping caveat.
+function costPanel(o, legs) {
+  const parts = fareParts(o);
+  const { pence, prefix } = priceOf(o);
+  const rows = legs.map((leg) => {
+    let label, val;
+    if (leg.mode === "walking" || leg.mode === "cycle") {
+      label = leg.mode === "cycle" ? "Cycle" : "Walk";
+      val = leg.mode === "cycle" ? money(parts.bikePart) : "Free";
+    } else if (leg.mode === "car") {
+      label = cap(leg.brand || "Cab");
+      val = `${money(Math.round(o.costPence * 0.85))}–${money(o.costPence)} est.`;
+    } else {
+      label = leg.line || cap(leg.mode);
+      val = leg.farePence != null ? money(leg.farePence) : `<span class="muted">included</span>`;
+    }
+    return `<div class="cost-row"><span>${legIcon(leg)} ${label}</span><span>${val}</span></div>`;
+  }).join("");
+  const perTraveller = parts.isCab ? Math.round(pence / peopleCount) : pence;
+  const party = parts.isCab ? pence : pence * peopleCount;
+  const railNote = hasTrain(o.legs) && readDiscounts().railcard
+    ? `<div class="cost-note">Railcard applied per eligible traveller.</div>` : "";
+  const capNote = `<div class="cost-note">Single-fare estimate. TfL daily capping may make your real spend lower; cab fares are estimates and excluded from capping.</div>`;
+  return `<details class="cost-panel" open>
+    <summary>Cost breakdown</summary>
+    <div class="cost-rows">${rows}</div>
+    <div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}</span></div>
+    <div class="cost-tot big"><span>Party total · ${peopleCount} ${peopleCount > 1 ? "people" : "person"}</span><span>${prefix}${money(party)}</span></div>
+    ${railNote}${capNote}
+  </details>`;
+}
+
+// Open the single-route page: own screen, map at top (scrolls), itinerary below.
 function openDetail(o) {
   const data = lastResult;
+  clearDetailTimers();
+  lastDetailOption = o;
   const pubOn = pubStop && !o.synthetic;
 
-  // Anchor to the entered start/end (links use those names). The final leg
-  // becomes "Walk to <end>" so we don't need a separate Start/End row.
-  // Consecutive train hops collapse into one section (one ticket, one Trainline link).
+  // Anchor to the entered start/end; collapse the train journey into one section.
   const legs = mergeTrainLegs(o.legs.map((l) => ({ ...l })));
   if (legs.length) {
     legs[0] = { ...legs[0], from: data.origin.name, fromLL: data.origin };
@@ -648,26 +873,126 @@ function openDetail(o) {
     legs[legs.length - 1] = last;
   }
 
-  const legSteps = legs.map(stepDetail);
+  const firstTransitIdx = legs.findIndex(TRANSIT_LEG);
+  const cards = legs.map((leg, i) => legCard(leg, i, firstTransitIdx));
   if (pubOn) {
     let idx = legs.findIndex((l) => BOARD_MODES.includes(l.mode));
-    if (idx < 0) idx = legSteps.length;
-    legSteps.splice(idx, 0, '<li class="step pub-step"><span class="step-ic">🍺</span><div class="step-body"><div class="pub-name">Finding a good pub…</div></div></li>');
+    if (idx < 0) idx = cards.length;
+    cards.splice(idx, 0, '<li class="legc pub-step" style="--acc:#d9a521"><span class="legc-ic" style="background:#d9a521">🍺</span><div class="legc-body"><div class="legc-title pub-name">Finding a good pub…</div></div></li>');
   }
 
+  const { dep, arr } = clockTimes(o);
+  const { pence, prefix } = priceOf(o);
+  const accActive = !o.synthetic && !!accessPreference();
   $("#detailContent").innerHTML = `
-    <div class="d-head">${summaryHTML(o)}</div>
-    <ol class="steps">${legSteps.join("")}</ol>
-    ${priceBreakdown(o)}`;
+    <div class="disr-banner" id="disrBanner" hidden></div>
+    <div class="itin-head">
+      <div class="itin-row">
+        <div class="itin-time">${fmtMin(o.durationMin)}</div>
+        <div class="itin-cost">${prefix}${money(pence)}${peopleCount > 1 && pence > 0 ? " <small>pp</small>" : ""}</div>
+      </div>
+      <div class="itin-meta">${fmtClock(dep)} → ${fmtClock(arr)} · ${countChanges(legs)} change${countChanges(legs) === 1 ? "" : "s"}</div>
+      ${accActive ? '<div class="itin-acc">♿ Step-free routing requested</div>' : ""}
+    </div>
+    <ol class="legs-list">${cards.join("")}</ol>
+    ${costPanel(o, legs)}`;
   $("#detail").classList.remove("hidden");
   document.body.classList.add("detail-open");
   $("#detail").scrollTop = 0;
   setTimeout(() => {
-    map.invalidateSize(); // map lives in the hidden page until now
+    map.invalidateSize();
     drawRoute(data, o);
   }, 60);
   if (pubOn) loadPub(o);
+  if (!o.synthetic) {
+    // Detail-side live data must never break the page if TfL misbehaves.
+    try { startCountdown(legs, firstTransitIdx); } catch (e) { console.warn("countdown:", e); }
+    try { loadDisruptions(legs); } catch (e) { console.warn("disruptions:", e); }
+  }
 }
+
+// --- A2 live countdown -----------------------------------------------------
+function clearDetailTimers() {
+  detailTimers.forEach(clearInterval);
+  detailTimers = [];
+}
+async function refreshCountdown(leg, idx) {
+  const el = $(`#detailContent .leg-countdown[data-leg="${idx}"]`);
+  if (!el) return;
+  const list = await arrivals(leg.fromId, leg.line).catch(() => []);
+  if (!list.length) {
+    el.innerHTML = `🕓 <span class="muted">Scheduled — no live prediction</span>`;
+    return;
+  }
+  const soon = list[0];
+  const mins = Math.round(soon.seconds / 60);
+  const when = mins <= 0 ? "due" : `in ${mins} min`;
+  el.innerHTML = `🟢 Departs <b>${when}</b>${soon.destination ? ` · to ${soon.destination}` : ""}`;
+}
+function startCountdown(legs, idx) {
+  if (idx < 0) return;
+  const leg = legs[idx];
+  if (!leg || !leg.fromId) return;
+  refreshCountdown(leg, idx);
+  const t = setInterval(() => {
+    if (document.hidden) return; // pause when backgrounded (save battery/quota)
+    refreshCountdown(leg, idx);
+  }, 30000);
+  detailTimers.push(t);
+}
+
+// --- D3 disruptions --------------------------------------------------------
+const SEV = (s) => (s <= 6 ? "severe" : s < 10 ? "minor" : "ok"); // <10 = worse than Good Service
+async function loadDisruptions(legs) {
+  const ids = [...new Set(legs.filter(TRANSIT_LEG).map((l) => l.lineId).filter(Boolean))];
+  if (!ids.length) return;
+  const run = async () => {
+    const statuses = await lineStatus(ids).catch(() => []);
+    const bad = statuses.filter((s) => s.severity < 10);
+    const banner = $("#disrBanner");
+    if (!bad.length) {
+      if (banner) { banner.hidden = true; banner.innerHTML = ""; }
+      // clear per-leg badges
+      $$(".leg-disr").forEach((e) => { e.hidden = true; e.innerHTML = ""; });
+      return;
+    }
+    if (banner) {
+      const worst = bad.reduce((w, s) => (s.severity < w.severity ? s : w), bad[0]);
+      banner.hidden = false;
+      banner.className = `disr-banner ${SEV(worst.severity)}`;
+      banner.innerHTML =
+        `<b>⚠️ ${bad.map((b) => b.name).join(", ")}: ${worst.description}</b>` +
+        (worst.reason ? `<div class="disr-reason">${worst.reason}</div>` : "") +
+        `<button class="disr-alt" type="button">Find alternative</button>`;
+      const alt = banner.querySelector(".disr-alt");
+      if (alt) alt.onclick = () => findAlternative(legs.find((l) => l.lineId === worst.id));
+    }
+    // per-leg badges (match by attribute value safely, no selector injection)
+    const byId = new Map(bad.map((s) => [s.id, s]));
+    $$(".leg-disr").forEach((e) => {
+      const s = byId.get(e.getAttribute("data-line"));
+      if (!s) return;
+      e.hidden = false;
+      e.className = `leg-disr ${SEV(s.severity)}`;
+      e.textContent = `⚠️ ${s.description}${s.reason ? " — " + s.reason : ""}`;
+    });
+  };
+  const safeRun = () => run().catch((err) => console.warn("disruptions:", err));
+  safeRun();
+  const t = setInterval(() => { if (!document.hidden) safeRun(); }, 45000);
+  detailTimers.push(t);
+}
+// "Find alternative": re-plan avoiding the disrupted leg's mode, then reopen.
+function findAlternative(leg) {
+  if (!leg) return;
+  const modeToAvoid = TRAIN_MODES.includes(leg.mode) ? "train" : leg.mode;
+  const cb = $(`#avoid input[data-mode="${modeToAvoid === "tube" ? "tube" : modeToAvoid}"]`);
+  if (cb) cb.checked = true;
+  updateAvoidPreviews();
+  closeDetail();
+  plan();
+}
+const $$ = (s) => [...document.querySelectorAll(s)];
 
 // AI-style price breakdown shown under the route steps. Each emoji works like a
 // bullet point: the text sits inline beside it with a hanging indent.
@@ -707,8 +1032,84 @@ function priceBreakdown(o) {
 }
 
 function closeDetail() {
+  clearDetailTimers();
+  lastDetailOption = null;
   $("#detail").classList.add("hidden");
   document.body.classList.remove("detail-open");
+}
+
+// --- C1: live "Avoid" preview deltas ---------------------------------------
+// Shows "+12 min / +£0.80" next to each Avoid toggle before you commit.
+const previewCache = new Map();
+let previewToken = 0;
+let previewTimer = null;
+function baselineHeadline() {
+  if (!lastResult || !lastResult.options) return null;
+  const movers = [...lastResult.options];
+  if (!movers.length) return null;
+  const best = movers.reduce((a, b) => (a.durationMin <= b.durationMin ? a : b));
+  return { min: best.durationMin, pence: best.costPence };
+}
+function avoidComboKey(extraAvoid) {
+  const base = [...avoidedModes()];
+  if (extraAvoid) base.push(extraAvoid);
+  const o = lastResult || {};
+  return `${o.origin?.lat},${o.dest?.lat}|${[...new Set(base)].sort().join(",")}`;
+}
+async function previewFor(input) {
+  const base = baselineHeadline();
+  const badge = input.closest("label").querySelector(".avoid-delta");
+  if (!badge) return;
+  if (input.checked || !base) { badge.textContent = ""; return; } // only preview turning ON
+  const mode = input.dataset.mode;
+  const key = avoidComboKey(mode);
+  badge.innerHTML = '<span class="spin sm"></span>';
+  const apply = (h) => {
+    if (!h) return (badge.textContent = "");
+    if (h === "none") { badge.textContent = "No route"; badge.classList.add("bad"); return; }
+    const dMin = Math.round(h.min - base.min);
+    const dP = h.pence - base.pence;
+    const parts = [];
+    if (dMin) parts.push(`${dMin > 0 ? "+" : ""}${dMin} min`);
+    if (Math.abs(dP) >= 5) parts.push(`${dP > 0 ? "+" : "−"}${pounds(Math.abs(dP)).slice(1) ? "£" + (Math.abs(dP) / 100).toFixed(2) : ""}`);
+    badge.classList.remove("bad");
+    badge.textContent = parts.length ? parts.join(" · ") : "≈ same";
+  };
+  if (previewCache.has(key)) return apply(previewCache.get(key));
+  const myToken = ++previewToken;
+  try {
+    const [bays, stations] = await Promise.all([baysPromise, stationsPromise]);
+    // Candidate avoid set = current avoids + this toggle.
+    const avoid = new Set([...avoidedModes(), mode]);
+    const TRANSIT = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram", "bus", "walking"];
+    const trainGroup = ["national-rail", "overground", "elizabeth-line", "dlr", "tram"];
+    const transitModes = TRANSIT.filter((m) => {
+      if (m === "tube" && avoid.has("tube")) return false;
+      if (m === "bus" && avoid.has("bus")) return false;
+      if (avoid.has("train") && trainGroup.includes(m)) return false;
+      return true;
+    });
+    const data = await runPlan(lastResult.origin, lastResult.dest, bays, {
+      stations, transitModes, allowBike: !avoid.has("bike"), allowCab: !avoid.has("cab"),
+    });
+    if (myToken !== previewToken) return; // a newer toggle superseded this one
+    let h = "none";
+    if (data.options && data.options.length) {
+      const best = data.options.reduce((a, b) => (a.durationMin <= b.durationMin ? a : b));
+      h = { min: best.durationMin, pence: best.costPence };
+    }
+    previewCache.set(key, h);
+    apply(h);
+  } catch {
+    if (myToken === previewToken) badge.textContent = ""; // fail silently (don't block Update)
+  }
+}
+function updateAvoidPreviews() {
+  previewCache.clear();
+  $$("#avoid input").forEach((i) => {
+    const badge = i.closest("label").querySelector(".avoid-delta");
+    if (badge) badge.textContent = "";
+  });
 }
 
 // Pub within a 15-min walk of where this route boards; drop it into its step + map.
@@ -759,6 +1160,7 @@ function resetApp() {
   pubStop = false;
   $("#pubChk").checked = false;
   $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
+  updateAvoidPreviews();
   $("#discounts").querySelectorAll("input").forEach((i) => (i.checked = false));
   peopleCount = 1;
   $("#peopleSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.n === "1"));
@@ -774,6 +1176,15 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.30", [
+    "Route page rebuilt as a step-by-step itinerary: mode icons, official line colours, walk times, changes count and depart/arrive clock times.",
+    "Live departure countdown on your first transit leg, refreshing every 30s (pauses when the tab is hidden).",
+    "Cost breakdown per leg and per traveller, with a party total and capping caveat.",
+    "Live disruption alerts: a banner when a line on your route is delayed or suspended, with a Find alternative action.",
+    "Accessibility filters (step-free only / avoid stairs), saved across visits.",
+    "Avoid toggles now preview their time/cost impact before you tap Update.",
+    "Clear loading skeletons and recoverable empty / offline / error states.",
+  ]],
   ["0.29", [
     "The whole train journey now collapses into one section with a single Trainline link — even when you change trains.",
     "Overground, Elizabeth line and Thameslink now count as trains, so their fare shows and a railcard applies.",
@@ -901,6 +1312,32 @@ function drawRoute(data, o) {
   if (resetBtn) resetBtn.style.display = ""; // show again for this route
   map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
+
+// --- C1 wiring: debounced preview on each Avoid toggle ---------------------
+$$("#avoid input").forEach((input) => {
+  input.addEventListener("change", () => {
+    clearTimeout(previewTimer);
+    // Run a preview for every OFF toggle (turning one ON clears its own delta).
+    previewTimer = setTimeout(() => {
+      $$("#avoid input").forEach((i) => previewFor(i));
+    }, 400);
+  });
+});
+
+// --- B3 wiring: persist the accessibility preference -----------------------
+restoreAccess();
+$$("#access input").forEach((i) => i.addEventListener("change", saveAccess));
+
+// --- C3: react to connectivity changes -------------------------------------
+window.addEventListener("offline", () => {
+  if (!document.body.classList.contains("detail-open")) {
+    showState("offline", {
+      title: "You're offline",
+      body: "Quickest needs a connection to plan a route." + (lastResult ? " Your last route is still saved." : ""),
+      actions: lastResult ? [{ label: "Show last route", onClick: () => render(lastResult) }] : [],
+    });
+  }
+});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});

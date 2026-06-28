@@ -359,3 +359,82 @@ body.has-results .splash { display: none; }
 }
 .app-logo { width: 26px; height: 26px; border-radius: 7px; }
 .app-arrow { font-size: 12px; font-weight: 800; color: var(--brand); }
+
+/* ===================== STAGING (spec v0.30) ===================== */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.spin.sm { width: 12px; height: 12px; border-width: 2px; }
+.muted { color: var(--muted); }
+.stagetag {
+  margin-left: 6px; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
+  background: #ff5a1f; color: #fff; padding: 2px 5px; border-radius: 5px; vertical-align: middle;
+}
+
+/* C3 — skeletons + recoverable states */
+.state-skel { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+.skel-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.skel-line { height: 12px; border-radius: 6px; margin-bottom: 9px;
+  background: linear-gradient(90deg,#eef2f7 25%,#e2e8f0 37%,#eef2f7 63%); background-size: 400% 100%;
+  animation: shimmer 1.3s ease infinite; }
+.skel-line.w40 { width: 40%; } .skel-line.w70 { width: 70%; }
+.skel-pills { display: flex; gap: 6px; } .skel-pills span { width: 46px; height: 20px; border-radius: 7px;
+  background: linear-gradient(90deg,#eef2f7 25%,#e2e8f0 37%,#eef2f7 63%); background-size: 400% 100%; animation: shimmer 1.3s ease infinite; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+.state-card { margin: 22px 16px; text-align: center; border: 1px solid var(--line); border-radius: 16px; padding: 26px 20px; background: #fff; }
+.state-ic { font-size: 34px; }
+.state-title { font-weight: 800; font-size: 16px; margin: 8px 0 4px; }
+.state-body { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.state-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.state-act { background: var(--brand); color: #fff; border: none; border-radius: 10px; padding: 9px 14px; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+.field.invalid input { box-shadow: 0 0 0 2px #e0533d inset; border-radius: 8px; }
+.dbg { margin-top: 10px; text-align: left; }
+.dbg summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.dbg pre { white-space: pre-wrap; word-break: break-word; font-size: 10.5px; line-height: 1.4; background: #f5f7fa; border-radius: 8px; padding: 8px; margin-top: 6px; color: #444; }
+
+/* C1 — avoid preview delta */
+.avoid-delta { margin-left: 6px; font-size: 11.5px; font-weight: 700; color: var(--brand); }
+.avoid-delta.bad { color: #c0392b; }
+
+/* A2 — itinerary head + leg cards */
+.itin-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+.itin-row { display: flex; align-items: baseline; justify-content: space-between; }
+.itin-time { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+.itin-cost { font-size: 20px; font-weight: 800; color: var(--brand); }
+.itin-cost small { font-size: 12px; }
+.itin-meta { color: var(--muted); font-size: 13px; font-weight: 600; margin-top: 2px; }
+.itin-acc { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 700; color: #0a7d4b; background: #e4f7ee; border-radius: 7px; padding: 3px 8px; }
+.legs-list { list-style: none; margin: 0; padding: 6px 16px 4px; }
+.legc { position: relative; display: flex; gap: 11px; padding: 11px 0 11px 12px; border-left: 3px solid var(--acc, #cfd8e0); }
+.legc + .legc { border-top: 1px dashed var(--line); }
+.legc-ic { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 16px; }
+.legc-body { flex: 1; min-width: 0; }
+.legc-title { font-weight: 800; font-size: 14.5px; }
+.legc-sub { color: var(--ink); font-size: 13px; margin-top: 1px; }
+.legc-extra { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.leg-countdown { margin-top: 6px; font-size: 12.5px; font-weight: 700; color: #0a7d4b; display: flex; align-items: center; gap: 6px; }
+.leg-stops { margin-top: 6px; font-size: 12.5px; }
+.leg-stops summary { color: var(--brand); font-weight: 700; cursor: pointer; }
+.leg-stops ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.leg-stops li { font-size: 12.5px; line-height: 1.5; }
+
+/* A4 — cost panel */
+.cost-panel { margin: 8px 16px 16px; border: 1px solid var(--line); border-radius: 13px; padding: 4px 12px 12px; }
+.cost-panel summary { font-weight: 800; padding: 9px 0; cursor: pointer; }
+.cost-row, .cost-tot { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; }
+.cost-row { border-top: 1px dashed var(--line); color: var(--ink); }
+.cost-tot { font-weight: 700; border-top: 1px solid var(--line); margin-top: 4px; }
+.cost-tot.big { font-size: 15px; font-weight: 800; }
+.cost-note { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 8px; }
+
+/* D3 — disruption banners */
+.disr-banner { margin: 12px 16px 0; border-radius: 12px; padding: 11px 13px; font-size: 13px; line-height: 1.45; }
+.disr-banner.minor { background: #fff4e0; border: 1px solid #f4c878; color: #7a4e00; }
+.disr-banner.severe { background: #fde4e1; border: 1px solid #e9a59c; color: #8a1c0e; }
+.disr-reason { margin-top: 4px; font-weight: 500; }
+.disr-alt { margin-top: 9px; background: #111; color: #fff; border: none; border-radius: 9px; padding: 7px 12px; font-weight: 700; font-size: 12.5px; cursor: pointer; }
+.leg-disr { margin-top: 6px; font-size: 12px; font-weight: 700; border-radius: 7px; padding: 4px 8px; }
+.leg-disr.minor { background: #fff4e0; color: #7a4e00; }
+.leg-disr.severe { background: #fde4e1; color: #8a1c0e; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skel-line, .skel-pills span { animation: none; }
+}
