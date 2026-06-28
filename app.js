@@ -2,7 +2,7 @@
 // TfL and Nominatim directly (both allow CORS). No backend required.
 import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
-import { railcardPence, bikePricing, zoneFor, isPeakDate } from "./lib/fares.js";
+import { railcardPence, bikePricing, zoneForStation, isPeakDate } from "./lib/fares.js";
 import { arrivals, lineStatus } from "./lib/tfl.js";
 
 // --- Live countdown / disruption polling state -----------------------------
@@ -604,16 +604,31 @@ function readDiscounts() {
   return { railcard: on.has("railcard") };
 }
 
+// Estimate a cab leg's fare from its straight-line distance (mirrors the engine's
+// cabHop model) so cab-to-station routes split correctly into cab + transit.
+function cabHopPence(leg) {
+  if (!leg || !leg.fromLL || !leg.toLL) return 0;
+  const toRad = (x) => (x * Math.PI) / 180, R = 6371000;
+  const dLat = toRad(leg.toLL.lat - leg.fromLL.lat), dLon = toRad(leg.toLL.lon - leg.fromLL.lon);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(leg.fromLL.lat)) * Math.cos(toRad(leg.toLL.lat)) * Math.sin(dLon / 2) ** 2;
+  const km = ((2 * R * Math.asin(Math.sqrt(a))) / 1000) * 1.3;
+  const driveMin = Math.round(km * 3 + 3);
+  return Math.round(250 + 150 * km + 25 * driveMin);
+}
+
 // Split a route's cost into its parts so a railcard only discounts the *train*
-// fare (not the bike hire, tube or bus). Returns pence amounts.
+// fare (not the bike hire, cab, tube or bus). Returns pence amounts.
 function fareParts(o) {
   const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
   const bike = o.legs.find((l) => l.mode === "cycle");
   const bikePart = bike ? bikePricing(Math.round(bike.durationMin)).pence : 0;
-  const transit = isCab ? 0 : Math.max(0, o.costPence - bikePart);
+  const carLeg = o.legs.find((l) => l.mode === "car");
+  // Whole-journey cab (synthetic Uber/Bolt) = the lot; cab-to-station = just the hop.
+  const carPart = carLeg ? (o.synthetic ? o.costPence : Math.min(cabHopPence(carLeg), o.costPence)) : 0;
+  const transit = Math.max(0, o.costPence - bikePart - carPart);
   const busPart = o.legs.some((l) => l.mode === "bus") ? Math.min(175, transit) : 0;
   const railPart = Math.max(0, transit - busPart); // tube/train portion
-  return { isCab, bikePart, transit, busPart, railPart };
+  return { isCab, bikePart, carPart, transit, busPart, railPart };
 }
 
 // What a route actually costs to show, after discounts. Returns {pence, prefix, railHint}.
@@ -833,8 +848,9 @@ function costPanel(o, legs) {
   const railLegs = legs.filter((l) => RAIL_MODES.includes(l.mode));
   let zoneStr = "";
   if (railLegs.length) {
-    const fz = zoneFor(railLegs[0].fromLL?.lat, railLegs[0].fromLL?.lon);
-    const tz = zoneFor(railLegs[railLegs.length - 1].toLL?.lat, railLegs[railLegs.length - 1].toLL?.lon);
+    const a = railLegs[0], b = railLegs[railLegs.length - 1];
+    const fz = zoneForStation(a.from, a.fromLL?.lat, a.fromLL?.lon);
+    const tz = zoneForStation(b.to, b.toLL?.lat, b.toLL?.lon);
     const lo = Math.min(fz, tz), hi = Math.max(fz, tz);
     zoneStr = `${lo === hi ? `Zone ${lo}` : `Zones ${lo}–${hi}`}, ${isPeakDate(clockTimes(o).dep) ? "peak" : "off-peak"}`;
   }
@@ -846,7 +862,7 @@ function costPanel(o, legs) {
       val = leg.mode === "cycle" ? money(parts.bikePart) : "Free";
     } else if (leg.mode === "car") {
       label = cap(leg.brand || "Cab");
-      val = `${money(Math.round(o.costPence * 0.85))}–${money(o.costPence)} est.`;
+      val = `${money(Math.round(parts.carPart * 0.85))}–${money(parts.carPart)} est.`;
     } else if (leg.mode === "bus") {
       label = "Bus";
       val = money(parts.busPart || 175);
@@ -868,8 +884,26 @@ function costPanel(o, legs) {
     <div class="cost-rows">${rows}</div>
     <div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}</span></div>
     <div class="cost-tot big"><span>Party total · ${peopleCount} ${peopleCount > 1 ? "people" : "person"}</span><span>${prefix}${money(party)}</span></div>
-    ${railNote}${capNote}
+    ${limeWorkings(legs)}${railNote}${capNote}
   </details>`;
+}
+
+// Lime fare workings: pay-as-you-go vs a 30-min pass, with a return-trip tip.
+function limeWorkings(legs) {
+  const bike = legs.find((l) => l.mode === "cycle");
+  if (!bike) return "";
+  const b = bikePricing(Math.round(bike.durationMin));
+  const li = [];
+  li.push(`Pay-as-you-go: ${money(b.unlockPence)} unlock + ${b.perMinPence}p/min × ${b.min} min = <b>${money(b.paygPence)}</b>`);
+  li.push(`${b.passMins}-min pass${b.passesNeeded > 1 ? ` × ${b.passesNeeded}` : ""}: <b>${money(b.passPence)}</b>`);
+  li.push(b.pass
+    ? `✓ The pass wins — you save ${money(b.paygPence - b.passPence)} on this ride.`
+    : `✓ Pay-as-you-go is cheaper for a ride this short.`);
+  if (b.returnPassCovers) {
+    const rtPayg = 2 * b.paygPence;
+    li.push(`Heading back the same way? One ${b.passMins}-min pass (${money(b.passUnitPence)}) covers there <i>and</i> back (${b.min * 2} min total) — vs ${money(rtPayg)} for two pay-as-you-go trips.`);
+  }
+  return `<details class="cost-sub"><summary>🍋‍🟩 How the Lime fare works</summary><ul>${li.map((x) => `<li>${x}</li>`).join("")}</ul></details>`;
 }
 
 // Open the single-route page: own screen, map at top (scrolls), itinerary below.
@@ -1191,6 +1225,10 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.32", [
+    "Lime fares now show their workings: pay-as-you-go (£1 + 29p/min) vs a 30-min pass, whichever is cheaper — with a tip when one pass also covers your return.",
+    "Tube/rail zones now come from a station lookup (more accurate than the distance estimate), falling back to the estimate for any station not yet listed.",
+  ]],
   ["0.31", [
     "Tube/rail fares are now estimated by zone (e.g. Zones 1–3, peak/off-peak) instead of a flat fare — shown in the cost breakdown and used for ranking.",
   ]],

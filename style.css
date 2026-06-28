@@ -424,6 +424,10 @@ body.has-results .splash { display: none; }
 .cost-tot { font-weight: 700; border-top: 1px solid var(--line); margin-top: 4px; }
 .cost-tot.big { font-size: 15px; font-weight: 800; }
 .cost-note { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 8px; }
+.cost-sub { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.cost-sub summary { font-weight: 700; font-size: 13px; cursor: pointer; color: var(--accent-dark); }
+.cost-sub ul { margin: 8px 0 0; padding-left: 18px; }
+.cost-sub li { font-size: 12.5px; line-height: 1.5; margin-bottom: 4px; }
 
 /* D3 — disruption banners */
 .disr-banner { margin: 12px 16px 0; border-radius: 12px; padding: 11px 13px; font-size: 13px; line-height: 1.45; }
