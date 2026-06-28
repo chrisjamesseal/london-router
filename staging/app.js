@@ -375,9 +375,13 @@ async function plan() {
   } catch (e) {
     // Distinguish a network/TfL outage from "no route".
     const offline = navigator.onLine === false;
+    // Staging: surface the stack so we can pin down unexpected errors.
+    const dbg = (!offline && e && e.stack)
+      ? `<details class="dbg"><summary>Details</summary><pre>${String(e.stack).slice(0, 600).replace(/</g, "&lt;")}</pre></details>`
+      : "";
     showState(offline ? "offline" : "error", {
       title: offline ? "Connection lost" : "Couldn't reach TfL",
-      body: offline ? "You appear to be offline." : (e.message || "Something went wrong planning your route."),
+      body: (offline ? "You appear to be offline." : (e.message || "Something went wrong planning your route.")) + dbg,
       actions: [{ label: "Retry", onClick: () => plan() }],
     });
   } finally {
@@ -893,8 +897,9 @@ function openDetail(o) {
   }, 60);
   if (pubOn) loadPub(o);
   if (!o.synthetic) {
-    startCountdown(legs, firstTransitIdx);
-    loadDisruptions(legs);
+    // Detail-side live data must never break the page if TfL misbehaves.
+    try { startCountdown(legs, firstTransitIdx); } catch (e) { console.warn("countdown:", e); }
+    try { loadDisruptions(legs); } catch (e) { console.warn("disruptions:", e); }
   }
 }
 
@@ -906,7 +911,7 @@ function clearDetailTimers() {
 async function refreshCountdown(leg, idx) {
   const el = $(`#detailContent .leg-countdown[data-leg="${idx}"]`);
   if (!el) return;
-  const list = await arrivals(leg.fromId, leg.line);
+  const list = await arrivals(leg.fromId, leg.line).catch(() => []);
   if (!list.length) {
     el.innerHTML = `🕓 <span class="muted">Scheduled — no live prediction</span>`;
     return;
@@ -954,17 +959,19 @@ async function loadDisruptions(legs) {
       const alt = banner.querySelector(".disr-alt");
       if (alt) alt.onclick = () => findAlternative(legs.find((l) => l.lineId === worst.id));
     }
-    // per-leg badges
-    for (const s of bad) {
-      $$(`.leg-disr[data-line="${s.id}"]`).forEach((e) => {
-        e.hidden = false;
-        e.className = `leg-disr ${SEV(s.severity)}`;
-        e.textContent = `⚠️ ${s.description}${s.reason ? " — " + s.reason : ""}`;
-      });
-    }
+    // per-leg badges (match by attribute value safely, no selector injection)
+    const byId = new Map(bad.map((s) => [s.id, s]));
+    $$(".leg-disr").forEach((e) => {
+      const s = byId.get(e.getAttribute("data-line"));
+      if (!s) return;
+      e.hidden = false;
+      e.className = `leg-disr ${SEV(s.severity)}`;
+      e.textContent = `⚠️ ${s.description}${s.reason ? " — " + s.reason : ""}`;
+    });
   };
-  run();
-  const t = setInterval(() => { if (!document.hidden) run(); }, 45000);
+  const safeRun = () => run().catch((err) => console.warn("disruptions:", err));
+  safeRun();
+  const t = setInterval(() => { if (!document.hidden) safeRun(); }, 45000);
   detailTimers.push(t);
 }
 // "Find alternative": re-plan avoiding the disrupted leg's mode, then reopen.
@@ -1323,6 +1330,24 @@ window.addEventListener("offline", () => {
     });
   }
 });
+
+// --- Staging diagnostics: surface any uncaught error with its stack so a
+//     screenshot tells us exactly where it came from. ------------------------
+function surfaceError(label, err) {
+  const stack = err && err.stack ? String(err.stack) : String(err);
+  const wrap = $("#results");
+  if (!wrap) return;
+  document.body.classList.add("has-results");
+  wrap.classList.remove("hidden");
+  wrap.innerHTML = `
+    <div class="state-card" role="alert">
+      <div class="state-ic">🐞</div>
+      <div class="state-title">${label}</div>
+      <div class="state-body"><details class="dbg" open><summary>${(err && err.message) || "Error"}</summary><pre>${stack.slice(0, 800).replace(/</g, "&lt;")}</pre></details></div>
+    </div>`;
+}
+window.addEventListener("error", (e) => { if (e.error) surfaceError("Unexpected error", e.error); });
+window.addEventListener("unhandledrejection", (e) => { if (e.reason) surfaceError("Unexpected error", e.reason); });
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
