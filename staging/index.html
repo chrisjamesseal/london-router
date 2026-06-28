@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0062e3" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="icon" href="icon.svg" />
+  <title>Quickest · London (Staging)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="apphead">
+    <button id="homeLink" class="brand" aria-label="Quickest — new search">
+      <img src="icon.svg" class="brand-logo-img" alt="" />
+      <span>Quickest</span>
+      <span class="stagetag">STAGING</span>
+    </button>
+    <button class="ver" id="verPill">0.30β</button>
+  </header>
+
+  <div id="changelog" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head"><b>What's new</b><button id="changelogClose" class="sheet-x">✕</button></div>
+      <div id="changelogBody" class="sheet-body"></div>
+    </div>
+  </div>
+
+  <section class="panel">
+    <div id="splash" class="splash">
+      <img src="icon.svg" class="splash-logo" alt="" />
+      <h1 class="splash-title">Quickest</h1>
+      <p class="splash-feat">The fastest, cheapest way across London — door to door.</p>
+    </div>
+    <div id="tabs" class="tabs hidden" role="tablist">
+      <button class="tab active" data-sort="fastest" role="tab">
+        <span class="tab-k">Fastest</span>
+        <span class="tab-v" id="tabFastest"></span>
+      </button>
+      <button class="tab" data-sort="cheapest" role="tab">
+        <span class="tab-k">Cheapest</span>
+        <span class="tab-v" id="tabCheapest"></span>
+      </button>
+      <button class="tab" data-sort="custom" role="tab">
+        <span class="tab-k">Custom</span>
+        <span class="tab-v tab-new">New</span>
+      </button>
+    </div>
+
+    <!-- Custom tab: tweak options here, then hit Update -->
+    <div id="custom" class="custom hidden">
+      <div class="ex-line col">
+        <span class="ex-h">👥 Travellers</span>
+        <div class="seg full" id="peopleSeg">
+          <button type="button" data-n="1" class="on">1</button>
+          <button type="button" data-n="2">2</button>
+          <button type="button" data-n="3">3</button>
+          <button type="button" data-n="4">4</button>
+          <button type="button" data-n="5">5</button>
+          <button type="button" data-n="6">6</button>
+        </div>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">🕐 When</span>
+        <div class="seg full" id="whenSeg">
+          <button type="button" data-when="now" class="on">Leave now</button>
+          <button type="button" data-when="depart">Depart at</button>
+          <button type="button" data-when="arrive">Arrive by</button>
+        </div>
+        <input type="datetime-local" id="whenTime" class="when-time hidden" />
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">🍺 Pub Stop</span>
+        <div class="avoid" id="pubStop">
+          <label data-pub="on"><input type="checkbox" id="pubChk" />🍺 Add a pub stop</label>
+        </div>
+        <span class="ex-note">Drops in the nearest pub within a 15 min walk (not added to your journey time).</span>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">💳 Discounts</span>
+        <div class="avoid" id="discounts">
+          <label data-disc="railcard"><input type="checkbox" />🚆 Railcard</label>
+        </div>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">♿ Accessibility</span>
+        <div class="avoid" id="access">
+          <label data-acc="stepfree"><input type="checkbox" />♿ Step-free only</label>
+          <label data-acc="nostairs"><input type="checkbox" />🚶 Avoid stairs</label>
+        </div>
+        <span class="ex-note">Routes via step-free stations where TfL confirms them. Saved for next time.</span>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">🚫 Avoid</span>
+        <div class="avoid" id="avoid">
+          <label data-mode="bike"><input type="checkbox" data-mode="bike" />🚲 Bike<span class="avoid-delta"></span></label>
+          <label data-mode="tube"><input type="checkbox" data-mode="tube" />🚇 Tube<span class="avoid-delta"></span></label>
+          <label data-mode="train"><input type="checkbox" data-mode="train" />🚆 Train<span class="avoid-delta"></span></label>
+          <label data-mode="bus"><input type="checkbox" data-mode="bus" />🚌 Bus<span class="avoid-delta"></span></label>
+          <label data-mode="cab"><input type="checkbox" data-mode="cab" />🚗 Cabs<span class="avoid-delta"></span></label>
+        </div>
+        <span class="ex-note">Toggling a mode previews its time/cost impact before you tap Update.</span>
+      </div>
+      <p class="custom-hint">Tap <b>Update</b> to apply.</p>
+    </div>
+
+    <section id="results" class="results" aria-live="polite"></section>
+  </section>
+
+  <!-- Single-route page: own screen, map at the top (scrolls, not sticky). -->
+  <section id="detail" class="hidden">
+    <button id="backBtn" class="backbtn">← Back</button>
+    <div id="map"></div>
+    <div id="detailContent" class="detailpage"></div>
+  </section>
+
+  <header class="bar">
+    <div class="inputs">
+      <div class="field">
+        <span class="dot from"></span>
+        <input id="from" placeholder="From — Address or Postcode" autocomplete="off" />
+        <button class="clear" data-for="from" type="button" aria-label="Clear">✕</button>
+        <button id="locBtn" class="ghost" title="Use my location" aria-label="Use my location">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="7"></circle>
+            <line x1="12" y1="1.5" x2="12" y2="4.5"></line>
+            <line x1="12" y1="19.5" x2="12" y2="22.5"></line>
+            <line x1="1.5" y1="12" x2="4.5" y2="12"></line>
+            <line x1="19.5" y1="12" x2="22.5" y2="12"></line>
+            <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"></circle>
+          </svg>
+        </button>
+        <div id="acFrom" class="ac hidden"></div>
+      </div>
+      <div class="field">
+        <span class="dot to"></span>
+        <input id="to" placeholder="To — Address or Postcode" autocomplete="off" />
+        <button class="clear" data-for="to" type="button" aria-label="Clear">✕</button>
+        <div id="acTo" class="ac hidden"></div>
+      </div>
+      <button id="go" class="go">Find Best and Cheapest Routes</button>
+    </div>
+  </header>
+
+  <div id="status" class="status hidden"></div>
+
+  <!-- Full-screen loading splash: just the map texture + searching text. -->
+  <div id="loading" class="loading hidden">
+    <div class="loading-text"><span class="spin"></span><span id="loadingMsg"></span></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
