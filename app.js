@@ -2,10 +2,10 @@
 // TfL and Nominatim directly (both allow CORS). No backend required.
 import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
-import { railcardPence, bikePricing } from "./lib/fares.js";
+import { railcardPence, bikePricing, zoneFor, isPeakDate } from "./lib/fares.js";
 import { arrivals, lineStatus } from "./lib/tfl.js";
 
-// --- STAGING build state (live countdowns / disruption polling) ------------
+// --- Live countdown / disruption polling state -----------------------------
 let detailTimers = []; // intervals to clear when leaving the route page
 let lastDetailOption = null; // the option currently shown on the route page
 const ACCESS_KEY = "quickest.accessibility"; // persisted B3 preference
@@ -829,19 +829,34 @@ function legCard(leg, idx, firstTransitIdx) {
 function costPanel(o, legs) {
   const parts = fareParts(o);
   const { pence, prefix } = priceOf(o);
+  // Zone label for the tube/rail portion (one PAYG fare covers all the rail legs).
+  const railLegs = legs.filter((l) => RAIL_MODES.includes(l.mode));
+  let zoneStr = "";
+  if (railLegs.length) {
+    const fz = zoneFor(railLegs[0].fromLL?.lat, railLegs[0].fromLL?.lon);
+    const tz = zoneFor(railLegs[railLegs.length - 1].toLL?.lat, railLegs[railLegs.length - 1].toLL?.lon);
+    const lo = Math.min(fz, tz), hi = Math.max(fz, tz);
+    zoneStr = `${lo === hi ? `Zone ${lo}` : `Zones ${lo}–${hi}`}, ${isPeakDate(clockTimes(o).dep) ? "peak" : "off-peak"}`;
+  }
+  let railShown = false; // the zone fare is one charge across all rail legs
   const rows = legs.map((leg) => {
-    let label, val;
+    let label, val, note = "";
     if (leg.mode === "walking" || leg.mode === "cycle") {
       label = leg.mode === "cycle" ? "Cycle" : "Walk";
       val = leg.mode === "cycle" ? money(parts.bikePart) : "Free";
     } else if (leg.mode === "car") {
       label = cap(leg.brand || "Cab");
       val = `${money(Math.round(o.costPence * 0.85))}–${money(o.costPence)} est.`;
+    } else if (leg.mode === "bus") {
+      label = "Bus";
+      val = money(parts.busPart || 175);
     } else {
       label = leg.line || cap(leg.mode);
-      val = leg.farePence != null ? money(leg.farePence) : `<span class="muted">included</span>`;
+      if (!railShown) { railShown = true; val = money(parts.railPart); note = zoneStr; }
+      else val = `<span class="muted">included</span>`;
     }
-    return `<div class="cost-row"><span>${legIcon(leg)} ${label}</span><span>${val}</span></div>`;
+    const tag = note ? ` <span class="muted">· ${note}</span>` : "";
+    return `<div class="cost-row"><span>${legIcon(leg)} ${label}${tag}</span><span>${val}</span></div>`;
   }).join("");
   const perTraveller = parts.isCab ? Math.round(pence / peopleCount) : pence;
   const party = parts.isCab ? pence : pence * peopleCount;
@@ -1176,6 +1191,9 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.31", [
+    "Tube/rail fares are now estimated by zone (e.g. Zones 1–3, peak/off-peak) instead of a flat fare — shown in the cost breakdown and used for ranking.",
+  ]],
   ["0.30", [
     "Route page rebuilt as a step-by-step itinerary: mode icons, official line colours, walk times, changes count and depart/arrive clock times.",
     "Live departure countdown on your first transit leg, refreshing every 30s (pauses when the tab is hidden).",
