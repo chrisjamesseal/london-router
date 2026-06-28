@@ -9,6 +9,7 @@ import { arrivals, lineStatus } from "./lib/tfl.js";
 let detailTimers = []; // intervals to clear when leaving the route page
 let lastDetailOption = null; // the option currently shown on the route page
 const ACCESS_KEY = "quickest.accessibility"; // persisted B3 preference
+let DBG = ""; // staging breadcrumb: last hot-path step reached (for error reports)
 
 const $ = (s) => document.querySelector(s);
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
@@ -359,7 +360,10 @@ async function plan() {
       actions: [{ label: "Retry", onClick: () => plan() }],
     });
   }, 20000);
+  let where = "start"; // staging: which phase threw (DOMExceptions have no stack)
   try {
+    where = "options"; const opts = extrasOpts();
+    where = "resolve";
     const [origin, dest, bays, stations] = await Promise.all([
       resolve($("#from")),
       resolve($("#to")),
@@ -368,17 +372,22 @@ async function plan() {
     ]);
     if (!origin) return planInvalid(originStr);
     if (!dest) return planInvalid(destStr);
-    const data = await runPlan(origin, dest, bays, { stations, ...extrasOpts() });
-    data._noCab = avoidedModes().has("cab");
+    where = "runPlan";
+    const data = await runPlan(origin, dest, bays, { stations, ...opts });
+    where = "noCab"; data._noCab = avoidedModes().has("cab");
     lastResult = data;
-    render(data);
+    where = "render"; DBG = "render:start"; render(data);
   } catch (e) {
     // Distinguish a network/TfL outage from "no route".
     const offline = navigator.onLine === false;
-    // Staging: surface the stack so we can pin down unexpected errors.
-    const dbg = (!offline && e && e.stack)
-      ? `<details class="dbg"><summary>Details</summary><pre>${String(e.stack).slice(0, 600).replace(/</g, "&lt;")}</pre></details>`
-      : "";
+    // Staging diagnostics: DOMExceptions carry a message but no stack, so report
+    // the phase + error name so we can pinpoint it from a screenshot alone.
+    const dbg = offline ? "" :
+      `<details class="dbg" open><summary>Diagnostics</summary><pre>phase: ${where}
+step: ${DBG}
+name: ${(e && e.name) || "?"}
+message: ${((e && e.message) || String(e)).replace(/</g, "&lt;")}
+${e && e.stack ? "stack:\n" + String(e.stack).slice(0, 500).replace(/</g, "&lt;") : "(no stack)"}</pre></details>`;
     showState(offline ? "offline" : "error", {
       title: offline ? "Connection lost" : "Couldn't reach TfL",
       body: (offline ? "You appear to be offline." : (e.message || "Something went wrong planning your route.")) + dbg,
@@ -672,6 +681,7 @@ function renderResults() {
   const badgeClass = sortBy === "cheapest" ? "badge cheap" : "badge";
 
   opts.forEach((o, i) => {
+    DBG = `card[${i}] ${o.strategy || o.label || (o.brand ? "cab:" + o.brand : "?")}`;
     const card = document.createElement("div");
     card.className = "card";
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
