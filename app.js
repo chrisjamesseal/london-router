@@ -21,8 +21,8 @@ L.tileLayer("https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
 }).addTo(map);
 L.control.zoom({ position: "topright" }).addTo(map);
 
-// "Reset map" control (bottom-right) — re-fit to the route preview, then hide
-// itself until the next route is drawn.
+// "Reset map" control (bottom-right) — re-fit to the route preview. Hidden until
+// the user actually pans/zooms the map; hidden again after reset or a new route.
 let lastRoutePts = null;
 let resetBtn = null;
 function resetMapView() {
@@ -34,6 +34,7 @@ const ResetControl = L.Control.extend({
     const b = L.DomUtil.create("button", "map-reset");
     b.type = "button";
     b.innerHTML = "⤢ Reset map";
+    b.style.display = "none"; // shown only once the user interacts with the map
     L.DomEvent.on(b, "click", (e) => {
       L.DomEvent.stop(e);
       resetMapView();
@@ -44,6 +45,16 @@ const ResetControl = L.Control.extend({
   },
 });
 map.addControl(new ResetControl());
+
+// Reveal the reset button on genuine user interaction (pan/zoom/scroll/pinch).
+// Programmatic fitBounds doesn't fire these DOM events, so there are no false
+// positives. The zoom +/- buttons live inside the container, so their taps count.
+function revealReset() {
+  if (resetBtn && lastRoutePts) resetBtn.style.display = "";
+}
+["mousedown", "wheel", "touchstart"].forEach((ev) =>
+  map.getContainer().addEventListener(ev, revealReset, { passive: true })
+);
 
 let layers = L.layerGroup().addTo(map);
 let lastResult = null;
@@ -801,8 +812,8 @@ function clockTimes(o) {
 const countChanges = (legs) => Math.max(0, legs.filter(TRANSIT_LEG).length - 1);
 
 // One leg of the itinerary, with line-colour accent, board/alight, walk time,
-// a live-countdown slot (first transit leg) and an expandable stop list.
-function legCard(leg, idx, firstTransitIdx) {
+// the leg's fare, a live-countdown / bus-frequency slot, and expandable stops.
+function legCard(leg, idx, firstTransitIdx, fare, note) {
   const n = Math.round(leg.durationMin);
   const isTransit = TRANSIT_LEG(leg);
   const color = isTransit ? lineColor(leg) : "#9aa7b2";
@@ -822,22 +833,55 @@ function legCard(leg, idx, firstTransitIdx) {
   }
   const bound = RAIL_MODES.includes(leg.mode) ? compassBound(leg) : "";
   const towards = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : "";
-  const extra = [bound, towards].filter(Boolean).join(" · ");
+  const extra = [bound, towards, note].filter(Boolean).join(" · ");
   const cd = idx === firstTransitIdx
     ? `<div class="leg-countdown" data-leg="${idx}"><span class="spin sm"></span> live times…</div>` : "";
+  // Bus legs get an average-frequency line, filled in after render.
+  const freq = leg.mode === "bus"
+    ? `<div class="leg-freq" data-leg="${idx}"><span class="spin sm"></span> checking frequency…</div>` : "";
   const disr = isTransit && leg.lineId
     ? `<div class="leg-disr" data-line="${leg.lineId}" hidden></div>` : "";
   const stops = leg.stops && leg.stops.length > 2
     ? `<details class="leg-stops"><summary>${leg.stops.length} stops</summary><ol>${leg.stops.map((s) => `<li>${s}</li>`).join("")}</ol></details>` : "";
+  const fareChip = fare ? `<span class="legc-fare">${fare}</span>` : "";
   return `<li class="legc" style="--acc:${color}">
     <span class="legc-ic" style="background:${color};color:${textOn(color)}">${legIcon(leg)}</span>
     <div class="legc-body">
-      <div class="legc-title">${title}</div>
+      <div class="legc-title">${title}${fareChip}</div>
       ${sub ? `<div class="legc-sub">${sub}</div>` : ""}
       ${extra ? `<div class="legc-extra">${extra}</div>` : ""}
-      ${cd}${disr}${stops}
+      ${cd}${freq}${disr}${stops}
     </div>
   </li>`;
+}
+
+// Per-leg fare strings + the zone note for the (first) rail leg. Mirrors the
+// cost-panel split so the itinerary shows each leg's price inline.
+function legFares(o, legs) {
+  const parts = fareParts(o);
+  const { prefix } = priceOf(o);
+  const railLegs = legs.filter((l) => RAIL_MODES.includes(l.mode));
+  let zoneStr = "";
+  if (railLegs.length) {
+    const a = railLegs[0], b = railLegs[railLegs.length - 1];
+    const fz = zoneForStation(a.from, a.fromLL?.lat, a.fromLL?.lon);
+    const tz = zoneForStation(b.to, b.toLL?.lat, b.toLL?.lon);
+    const lo = Math.min(fz, tz), hi = Math.max(fz, tz);
+    zoneStr = `${lo === hi ? `Zone ${lo}` : `Zones ${lo}–${hi}`}, ${isPeakDate(clockTimes(o).dep) ? "peak" : "off-peak"}`;
+  }
+  let railShown = false, busShown = false;
+  return legs.map((leg) => {
+    if (leg.mode === "walking") return { fare: "Free", note: "" };
+    if (leg.mode === "cycle") return { fare: money(parts.bikePart), note: "" };
+    if (leg.mode === "car") return { fare: `${prefix}${money(parts.carPart)}`, note: "" };
+    if (leg.mode === "bus") {
+      const f = busShown ? "incl." : money(parts.busPart || 175);
+      busShown = true;
+      return { fare: f, note: "" };
+    }
+    if (!railShown) { railShown = true; return { fare: money(parts.railPart), note: zoneStr }; }
+    return { fare: "incl.", note: "" };
+  });
 }
 
 // A4: cost breakdown per leg and per traveller, with capping caveat.
@@ -923,7 +967,8 @@ function openDetail(o) {
   }
 
   const firstTransitIdx = legs.findIndex(TRANSIT_LEG);
-  const cards = legs.map((leg, i) => legCard(leg, i, firstTransitIdx));
+  const fares = legFares(o, legs);
+  const cards = legs.map((leg, i) => legCard(leg, i, firstTransitIdx, fares[i].fare, fares[i].note));
   if (pubOn) {
     let idx = legs.findIndex((l) => BOARD_MODES.includes(l.mode));
     if (idx < 0) idx = cards.length;
@@ -957,6 +1002,7 @@ function openDetail(o) {
     // Detail-side live data must never break the page if TfL misbehaves.
     try { startCountdown(legs, firstTransitIdx); } catch (e) { console.warn("countdown:", e); }
     try { loadDisruptions(legs); } catch (e) { console.warn("disruptions:", e); }
+    try { loadBusFrequencies(legs, clockTimes(o).dep); } catch (e) { console.warn("bus freq:", e); }
   }
 }
 
@@ -988,6 +1034,40 @@ function startCountdown(legs, idx) {
     refreshCountdown(leg, idx);
   }, 30000);
   detailTimers.push(t);
+}
+
+// --- Bus frequency (how often the bus runs, on average) --------------------
+// Typical headway by time band, for the searched date/time when live data
+// isn't applicable (future searches) or unavailable.
+function typicalBusFreq(dep) {
+  if (!(dep instanceof Date) || isNaN(dep)) return 10;
+  const h = dep.getHours() + dep.getMinutes() / 60;
+  if (h < 5 || h >= 23.5) return 30;            // night
+  if (isPeakDate(dep)) return 7;                 // weekday peak
+  if (h >= 19) return 12;                        // evening
+  return 10;                                     // daytime off-peak
+}
+// Average gap between upcoming live arrivals of a bus line at a stop (minutes).
+async function liveBusFreq(stopId, lineName) {
+  const list = await arrivals(stopId, lineName).catch(() => []);
+  const secs = [...new Set(list.map((a) => a.seconds))].sort((a, b) => a - b).slice(0, 6);
+  if (secs.length < 2) return null;
+  let total = 0;
+  for (let i = 1; i < secs.length; i++) total += secs[i] - secs[i - 1];
+  return Math.max(1, Math.round(total / (secs.length - 1) / 60));
+}
+async function loadBusFrequencies(legs, dep) {
+  const live = whenMode === "now"; // live arrivals only reflect "now"
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    if (leg.mode !== "bus") continue;
+    const el = $(`#detailContent .leg-freq[data-leg="${i}"]`);
+    if (!el) continue;
+    let mins = null, src = "typical";
+    if (live && leg.fromId) { mins = await liveBusFreq(leg.fromId, leg.line); if (mins != null) src = "live"; }
+    if (mins == null) mins = typicalBusFreq(dep);
+    el.innerHTML = `🚌 ~ every <b>${mins} min</b> <span class="muted">(${src === "live" ? "live now" : "typical for this time"})</span>`;
+  }
 }
 
 // --- D3 disruptions --------------------------------------------------------
@@ -1225,6 +1305,11 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.34", [
+    "Each leg of the route now shows its own fare — the tube/rail price (with its zones) sits right on the leg, not just in the breakdown.",
+    "Bus legs show how often the bus runs on average — live frequency when you're travelling now, or a typical figure for the time and day you searched.",
+    "The “Reset map” button now only appears once you've actually moved or zoomed the map.",
+  ]],
   ["0.33", [
     "Station fare zones can now be refreshed from TfL's full station list, so zone-based fares cover the whole network accurately.",
   ]],
@@ -1368,7 +1453,7 @@ function drawRoute(data, o) {
   dotMarker(D.lat, D.lon, "#e0533d", "Destination").addTo(layers);
   L.polyline(pts, { color: "#0062e3", weight: 4, dashArray: "6 8", opacity: 0.75 }).addTo(layers);
   lastRoutePts = pts;
-  if (resetBtn) resetBtn.style.display = ""; // show again for this route
+  if (resetBtn) resetBtn.style.display = "none"; // hidden until the user moves the map
   map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
 
