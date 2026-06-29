@@ -252,9 +252,7 @@ body.has-results .field input { padding: 11px 4px; }
 .cl-list { margin: 0; padding-left: 18px; }
 .cl-list li { font-size: 13px; line-height: 1.5; }
 .step-ic-img { width: 20px; height: 20px; border-radius: 5px; display: block; }
-/* Push the results list to the bottom (best option nearest the search bar);
-   collapses to 0 when the list overflows so scrolling still works. */
-.smallprint { margin: auto 0 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
+.smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
 
 /* splash (first screen, before any search) — sits lower, fits one screen */
 .splash {

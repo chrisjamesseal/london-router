@@ -692,7 +692,7 @@ function setTab(sort) {
   $("#results").classList.toggle("hidden", custom);
   if (!custom) {
     renderResults();
-    $("#results").scrollTop = $("#results").scrollHeight; // best option sits at the bottom
+    $("#results").scrollTop = 0; // best option sits at the top
   }
 }
 
@@ -791,14 +791,8 @@ function renderResults() {
   const badgeLabel = sortBy === "cheapest" ? "Cheapest" : "Fastest";
   const badgeClass = sortBy === "cheapest" ? "badge cheap" : "badge";
 
-  // Small print sits at the top; the best option is rendered LAST so it lands at
-  // the bottom of the list, nearest the (bottom-aligned) search bar.
-  const sp = document.createElement("p");
-  sp.className = "smallprint";
-  sp.textContent = "Estimated prices and times. Check each operator for exact fares before you travel.";
-  wrap.appendChild(sp);
-
-  const cards = opts.map((o, i) => {
+  // Best option at the top; the free-walk gag and small print at the bottom.
+  opts.forEach((o, i) => {
     const card = document.createElement("div");
     card.className = "card";
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
@@ -807,10 +801,14 @@ function renderResults() {
     head.onclick = o.brand
       ? () => window.open(rideLink(o.brand), "_blank", "noopener")
       : () => openDetail(o);
-    return card;
+    wrap.appendChild(card);
   });
-  for (let i = cards.length - 1; i >= 0; i--) wrap.appendChild(cards[i]);
-  wrap.scrollTop = wrap.scrollHeight; // show the best option (bottom) first
+
+  const sp = document.createElement("p");
+  sp.className = "smallprint";
+  sp.textContent = "Estimated prices and times. Check each operator for exact fares before you travel.";
+  wrap.appendChild(sp);
+  wrap.scrollTop = 0; // best option (top) in view
 }
 
 // Deep links that open the ride app with the journey pre-filled.
@@ -1394,6 +1392,9 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.38", [
+    "Best option is back at the top of the results list.",
+  ]],
   ["0.37", [
     "Cleaner cost breakdown: per-leg prices removed from the itinerary; the bottom calculator merges all tube/rail into one line and shows a single Total (with Per-traveller only when in a group).",
     "The Lime pass return-trip tip now sits in its own lime-green box under the bike calculation.",
