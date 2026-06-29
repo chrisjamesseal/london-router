@@ -220,7 +220,7 @@ body.has-results .field input { padding: 11px 4px; }
 .custom { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .custom-hint { margin: 8px 2px 2px; font-size: 12.5px; color: var(--muted); }
 .custom-intro { margin: 2px 2px 12px; font-size: 13px; line-height: 1.5; color: var(--ink); background: #eef4ff; border: 1px solid #dbe6ff; border-radius: 11px; padding: 10px 12px; }
-.tab-new { color: #ff5a1f; font-weight: 800; }
+.tab-new { color: var(--brand); font-weight: 800; }
 .ex-note { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
 .seg.full { flex-wrap: wrap; }
 /* avoid / discounts chips — hide raw box, style selected */
@@ -252,7 +252,9 @@ body.has-results .field input { padding: 11px 4px; }
 .cl-list { margin: 0; padding-left: 18px; }
 .cl-list li { font-size: 13px; line-height: 1.5; }
 .step-ic-img { width: 20px; height: 20px; border-radius: 5px; display: block; }
-.smallprint { margin: 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
+/* Push the results list to the bottom (best option nearest the search bar);
+   collapses to 0 when the list overflows so scrolling still works. */
+.smallprint { margin: auto 0 0; padding: 10px 16px 4px; font-size: 11px; line-height: 1.4; color: var(--muted); text-align: center; }
 
 /* splash (first screen, before any search) — sits lower, fits one screen */
 .splash {
@@ -409,7 +411,11 @@ body.has-results .splash { display: none; }
 .legs-list { list-style: none; margin: 0; padding: 6px 16px 4px; }
 .legc { position: relative; display: flex; gap: 11px; padding: 11px 0 11px 12px; border-left: 3px solid var(--acc, #cfd8e0); }
 .legc + .legc { border-top: 1px dashed var(--line); }
-.legc-ic { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 16px; }
+.legc-ic { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 16px; overflow: hidden; }
+.legc-logo { width: 24px; height: 24px; border-radius: 6px; }
+.legc-link { flex: 0 0 auto; align-self: center; width: 34px; height: 34px; border-radius: 9px; background: var(--bg); display: grid; place-items: center; text-decoration: none; }
+.legc-link:active { opacity: .6; }
+.legc-link-img { width: 20px; height: 20px; border-radius: 5px; }
 .legc-body { flex: 1; min-width: 0; }
 .legc-title { font-weight: 800; font-size: 14.5px; }
 .legc-sub { color: var(--ink); font-size: 13px; margin-top: 1px; }

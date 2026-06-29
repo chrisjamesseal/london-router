@@ -2,7 +2,7 @@
 // TfL and Nominatim directly (both allow CORS). No backend required.
 import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
-import { railcardPence, bikePricing, zoneForStation, isPeakDate } from "./lib/fares.js";
+import { railcardPence, bikePricing, zoneForStation, isPeakDate, setBikeOp } from "./lib/fares.js";
 import { arrivals, lineStatus } from "./lib/tfl.js";
 
 // --- Live countdown / disruption polling state -----------------------------
@@ -65,6 +65,9 @@ let sortBy = "fastest"; // "fastest" | "cheapest"
 // (Tube/DLR/tram are Oyster-only, so they stay separate.)
 const TRAIN_MODES = ["national-rail", "train", "overground", "elizabeth-line", "thameslink"];
 const hasTrain = (legs) => legs.some((l) => TRAIN_MODES.includes(l.mode));
+// A railcard only applies to genuine National Rail (not tube/Overground/Elizabeth).
+const NATIONAL_RAIL_MODES = ["national-rail", "train"];
+const hasNationalRail = (legs) => legs.some((l) => NATIONAL_RAIL_MODES.includes(l.mode));
 // Where you'd board (and so stop for a pint just before).
 const BOARD_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "train", "tram", "bus"];
 const RAIL_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "train", "tram"];
@@ -110,6 +113,41 @@ const drinkMatch = (text) => {
   return DRINK_LOGOS.find((d) => d.key !== "lager" && d.key !== "pravha" && n.includes(d.key)) ||
     DRINK_LOGOS.find((d) => n.includes(d.key)) || null;
 };
+
+// --- User-switchable providers (Custom filters), persisted -----------------
+const PREFS_KEY = "quickest.prefs";
+let PREFS = { maps: "google", bike: "lime", trains: "trainline" };
+function loadPrefs() { try { Object.assign(PREFS, JSON.parse(localStorage.getItem(PREFS_KEY) || "{}")); } catch {} }
+function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(PREFS)); } catch {} }
+loadPrefs();
+setBikeOp(PREFS.bike);
+
+const MAPS_APPS = {
+  google: { name: "Google Maps", icon: "google.com/maps" },
+  citymapper: { name: "Citymapper", icon: "citymapper.com" },
+  apple: { name: "Apple Maps", icon: "apple.com" },
+};
+const BIKE_APPS = {
+  lime: { name: "Lime", icon: "li.me", link: "https://www.li.me/", emoji: "🍋‍🟩" },
+  forest: { name: "Forest", icon: "humanforest.co.uk", link: "https://www.humanforest.co.uk/", emoji: "🌳" },
+};
+const TRAIN_APPS = {
+  trainline: { name: "Trainline", icon: "thetrainline.com" },
+  trainpal: { name: "TrainPal", icon: "trainpal.com" },
+};
+const bikeApp = () => BIKE_APPS[PREFS.bike] || BIKE_APPS.lime;
+
+const slug = (s) => cleanName(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+// Train ticket link for one section (from → to), via the chosen provider.
+function trainTicketLink(leg) {
+  const from = cleanName(leg.from || ""), to = cleanName(leg.to || "");
+  if (PREFS.trains === "trainpal") {
+    if (!from || !to) return "https://www.trainpal.com/";
+    return `https://www.trainpal.com/ticket/search?departureName=${encodeURIComponent(from)}&arrivalName=${encodeURIComponent(to)}`;
+  }
+  if (!from || !to) return "https://www.thetrainline.com/";
+  return `https://www.thetrainline.com/train-times/${slug(from)}-to-${slug(to)}`;
+}
 
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
@@ -186,7 +224,7 @@ const LOADING_LINES = [
   "Finding the quickest way…",
   "Hunting down the cheapest route…",
   "Racing tubes, buses & e-bikes…",
-  "Checking 🍋‍🟩 Lime e-bikes…",
+  "Checking 🍋‍🟩 Lime Bikes…",
   "Sniffing out clever shortcuts…",
   "Skipping the slow changes…",
   "Beating plain old Maps…",
@@ -266,6 +304,24 @@ $("#whenSeg")
 // Pub-on-route stop: a simple on/off checkbox.
 let pubStop = false;
 $("#pubChk").onchange = (e) => { pubStop = e.target.checked; };
+
+// Provider pickers (Maps app / Bike operator / Train tickets), persisted.
+function wireProviderSeg(id, key, onChange) {
+  const seg = $(id);
+  if (!seg) return;
+  seg.querySelectorAll("button").forEach((b) => {
+    b.classList.toggle("on", b.dataset[key] === PREFS[key]);
+    b.onclick = () => {
+      PREFS[key] = b.dataset[key];
+      seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+      savePrefs();
+      if (onChange) onChange();
+    };
+  });
+}
+wireProviderSeg("#mapsSeg", "maps");
+wireProviderSeg("#trainSeg", "trains");
+wireProviderSeg("#bikeSeg", "bike", () => setBikeOp(PREFS.bike)); // affects pricing → re-plan on Update
 
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
@@ -525,10 +581,25 @@ function pointQuery(pt, name) {
   return null;
 }
 function mapsLink(leg) {
+  const a = leg.fromLL, b = leg.toLL;
+  const mode = mapsMode(leg.mode);
+  if (PREFS.maps === "citymapper") {
+    if (a && b && a.lat != null && b.lat != null)
+      return `https://citymapper.com/directions?startcoord=${a.lat}%2C${a.lon}&endcoord=${b.lat}%2C${b.lon}`;
+    return "https://citymapper.com/";
+  }
+  if (PREFS.maps === "apple") {
+    const flg = mode === "driving" ? "d" : mode === "walking" ? "w" : "r";
+    const daddr = b && b.lat != null ? `${b.lat},${b.lon}` : pointQuery(leg.toLL, leg.to);
+    if (!daddr) return null;
+    const saddr = a && a.lat != null ? `${a.lat},${a.lon}` : "";
+    return `https://maps.apple.com/?daddr=${daddr}${saddr ? `&saddr=${saddr}` : ""}&dirflg=${flg}`;
+  }
+  // Google Maps (default)
   const dest = pointQuery(leg.toLL, leg.to);
   if (!dest) return null;
   const origin = pointQuery(leg.fromLL, leg.from);
-  let u = `https://www.google.com/maps/dir/?api=1&travelmode=${mapsMode(leg.mode)}&destination=${dest}`;
+  let u = `https://www.google.com/maps/dir/?api=1&travelmode=${mode}&destination=${dest}`;
   if (origin) u += `&origin=${origin}`;
   return u;
 }
@@ -573,54 +644,6 @@ function legChip(leg) {
 }
 
 // A detailed, concise step for the single-route page.
-function stepDetail(leg) {
-  const n = Math.round(leg.durationMin);
-  let ic, main, sub, extra = "";
-  if (leg.mode === "cycle") {
-    ic = "🍋‍🟩";
-    main = `${fmtMin(n)} Bike`;
-    sub = cleanName(leg.summary || (leg.to ? `to ${leg.to}` : ""));
-  } else if (leg.mode === "walking") {
-    ic = "🚶";
-    main = leg.toDest ? `Walk to ${cleanName(leg.to).split(",")[0]}` : `${fmtMin(n)} Walk`;
-    sub = leg.toDest ? "" : leg.to ? `To ${cleanName(leg.to).split(",")[0]}` : cleanName(leg.summary || "").split(",")[0];
-    sub = sub.split(" ").slice(0, 5).join(" ");
-  } else if (leg.mode === "car") {
-    ic = "🚗";
-    main = leg.brand ? `${cap(leg.brand)} ride · ${fmtMin(n)}` : `${fmtMin(n)} Ride`;
-    sub = leg.summary || "";
-  } else {
-    ic = leg.mode === "bus" ? "🚌" : "🚆";
-    main = `${leg.line || leg.mode}${leg.durationMin ? ` · ${fmtMin(n)}` : ""}`;
-    sub = leg.from && leg.to ? `${cleanName(leg.from)} → ${cleanName(leg.to)}` : cleanName(leg.summary || "");
-    // Rail legs: show the compass bound (Eastbound…) plus where it's heading.
-    const towards = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : cleanPlatform(leg.platform || leg.direction);
-    const bound = RAIL_MODES.includes(leg.mode) ? compassBound(leg) : "";
-    extra = [bound, towards].filter(Boolean).join(" · ");
-  }
-  const color = ["cycle", "walking", "car"].includes(leg.mode) ? "" : lineColor(leg);
-  const style = color ? ` style="background:${color};color:${textOn(color)}"` : "";
-  // Trains → Trainline (buy a ticket); bike legs → open the Lime app; everything
-  // else → Google Maps directions for that leg.
-  const isTrain = TRAIN_MODES.includes(leg.mode);
-  const isBike = leg.mode === "cycle";
-  const link = isTrain ? trainlineLink(leg) : isBike ? LIME_LINK : mapsLink(leg);
-  const linkIc = isTrain
-    ? `<img class="step-ic-img" src="${favicon("thetrainline.com")}" alt="" onerror="this.replaceWith(document.createTextNode('🎫'))">`
-    : isBike
-    ? `<img class="step-ic-img" src="${favicon("li.me")}" alt="" onerror="this.replaceWith(document.createTextNode('🍋‍🟩'))">`
-    : `<img class="step-ic-img" src="${favicon("google.com/maps")}" alt="" onerror="this.replaceWith(document.createTextNode('🗺️'))">`;
-  return `<li class="step">
-    <span class="step-ic"${style}>${ic}</span>
-    <div class="step-body">
-      <div class="step-main">${main}</div>
-      ${sub ? `<div class="step-sub">${sub}</div>` : ""}
-      ${extra ? `<div class="step-plat">${extra}</div>` : ""}
-    </div>
-    ${link ? `<a class="step-map" href="${link}" target="_blank" rel="noopener" aria-label="Open">${linkIc}</a>` : ""}
-  </li>`;
-}
-
 // Rough taxi + walking estimates, synthesised from the straight-line distance.
 // Uber/Bolt are real-ish options; the free walk is the gag pinned to the bottom.
 function estimates(data) {
@@ -684,7 +707,7 @@ function setTab(sort) {
   $("#results").classList.toggle("hidden", custom);
   if (!custom) {
     renderResults();
-    $("#results").scrollTop = 0;
+    $("#results").scrollTop = $("#results").scrollHeight; // best option sits at the bottom
   }
 }
 
@@ -724,7 +747,7 @@ function fareParts(o) {
 function priceOf(o) {
   const d = readDiscounts();
   const parts = fareParts(o);
-  const trainy = hasTrain(o.legs);
+  const trainy = hasNationalRail(o.legs); // railcard only for normal trains
   let pence = o.costPence;
   let railHint = "";
   if (trainy && !o.synthetic) {
@@ -783,25 +806,26 @@ function renderResults() {
   const badgeLabel = sortBy === "cheapest" ? "Cheapest" : "Fastest";
   const badgeClass = sortBy === "cheapest" ? "badge cheap" : "badge";
 
-  opts.forEach((o, i) => {
+  // Small print sits at the top; the best option is rendered LAST so it lands at
+  // the bottom of the list, nearest the (bottom-aligned) search bar.
+  const sp = document.createElement("p");
+  sp.className = "smallprint";
+  sp.textContent = "Estimated prices and times. Check each operator for exact fares before you travel.";
+  wrap.appendChild(sp);
+
+  const cards = opts.map((o, i) => {
     const card = document.createElement("div");
     card.className = "card";
     const badge = i === 0 ? `<span class="${badgeClass}">${badgeLabel}</span>` : "";
     card.innerHTML = `<div class="card-head">${badge}${summaryHTML(o)}</div>`;
     const head = card.querySelector(".card-head");
-    // Cab cards open the ride app straight away (the pill is the button); every
-    // other route opens its single-route page.
     head.onclick = o.brand
       ? () => window.open(rideLink(o.brand), "_blank", "noopener")
       : () => openDetail(o);
-    wrap.appendChild(card);
+    return card;
   });
-
-  // Small print scrolls at the very bottom of the list (not pinned on screen).
-  const sp = document.createElement("p");
-  sp.className = "smallprint";
-  sp.textContent = "Estimated prices and times. Check each operator for exact fares before you travel.";
-  wrap.appendChild(sp);
+  for (let i = cards.length - 1; i >= 0; i--) wrap.appendChild(cards[i]);
+  wrap.scrollTop = wrap.scrollHeight; // show the best option (bottom) first
 }
 
 // Deep links that open the ride app with the journey pre-filled.
@@ -816,14 +840,6 @@ function rideLink(brand) {
   // Bolt universal link (no public coordinate deep-link) — opens the app/site.
   return "https://bolt.eu/en-gb/";
 }
-const LIME_LINK = "https://www.li.me/";
-// Trainline: buy a ticket for a National Rail leg (no map needed on a train).
-const slug = (s) => cleanName(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-function trainlineLink(leg) {
-  if (!leg.from || !leg.to) return "https://www.thetrainline.com/";
-  return `https://www.thetrainline.com/train-times/${slug(leg.from)}-to-${slug(leg.to)}`;
-}
-
 // Collapse a whole train journey into ONE section — you buy a single
 // through-ticket for it (one Trainline link). A run of train hops is merged even
 // across the short platform-change walks between them.
@@ -893,10 +909,11 @@ const countChanges = (legs) => Math.max(0, legs.filter(TRANSIT_LEG).length - 1);
 const MODE_NAME = {
   tube: "Tube", bus: "Bus", dlr: "DLR", overground: "Overground",
   "elizabeth-line": "Elizabeth line", tram: "Tram", "national-rail": "Train",
-  train: "Train", thameslink: "Train", cycle: "Lime Bike", car: "Cab",
+  train: "Train", thameslink: "Train", car: "Cab",
 };
 function modeSummary(legs) {
-  const seq = legs.filter((l) => l.mode !== "walking").map((l) => MODE_NAME[l.mode] || cap(l.mode));
+  const seq = legs.filter((l) => l.mode !== "walking")
+    .map((l) => l.mode === "cycle" ? `${bikeApp().name} Bike` : (MODE_NAME[l.mode] || cap(l.mode)));
   const out = [];
   for (const m of seq) if (out[out.length - 1] !== m) out.push(m);
   return out.length ? out.join(" · ") : "On foot";
@@ -913,7 +930,7 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
     title = leg.toDest ? `Walk to ${cleanName(leg.to).split(",")[0]}` : `Walk · ${fmtMin(n)}`;
     sub = leg.toDest ? "" : leg.to ? `to ${cleanName(leg.to).split(",")[0]}` : "";
   } else if (leg.mode === "cycle") {
-    title = `Lime Bike · ${fmtMin(n)}`;
+    title = `${bikeApp().name} Bike · ${fmtMin(n)}`;
     sub = leg.to ? `to ${cleanName(leg.to)}` : "";
   } else if (leg.mode === "car") {
     title = `${cap(leg.brand || "Cab")} · ${fmtMin(n)}`;
@@ -922,12 +939,13 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
     title = `${leg.line || cap(leg.mode)} · ${fmtMin(n)}`;
     sub = leg.from && leg.to ? `${cleanName(leg.from)} → ${cleanName(leg.to)}` : cleanName(leg.summary || "");
   }
-  const bound = RAIL_MODES.includes(leg.mode) ? compassBound(leg) : "";
-  const towards = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : "";
-  const extra = [bound, towards, note].filter(Boolean).join(" · ");
+  // Direction: trains show where they terminate; tube/DLR/tram show the bound.
+  let dir = "";
+  if (TRAIN_MODES.includes(leg.mode)) dir = leg.terminus ? `Towards ${cleanName(leg.terminus)}` : "";
+  else if (RAIL_MODES.includes(leg.mode)) dir = compassBound(leg);
+  const extra = [dir, note].filter(Boolean).join(" · ");
   const cd = idx === firstTransitIdx
     ? `<div class="leg-countdown" data-leg="${idx}"><span class="spin sm"></span> live times…</div>` : "";
-  // Bus legs get an average-frequency line, filled in after render.
   const freq = leg.mode === "bus"
     ? `<div class="leg-freq" data-leg="${idx}"><span class="spin sm"></span> checking frequency…</div>` : "";
   const disr = isTransit && leg.lineId
@@ -935,15 +953,44 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
   const stops = leg.stops && leg.stops.length > 2
     ? `<details class="leg-stops"><summary>${leg.stops.length} stops</summary><ol>${leg.stops.map((s) => `<li>${s}</li>`).join("")}</ol></details>` : "";
   const fareChip = fare ? `<span class="legc-fare">${fare}</span>` : "";
+  // Operator/app icon: real logos for Lime/Forest & cabs; mode emoji otherwise.
+  const appLogo = leg.mode === "cycle" ? bikeApp().icon
+    : leg.mode === "car" ? (BRAND_LOGOS[leg.brand] || "uber.com") : null;
+  const iconHtml = appLogo
+    ? `<img class="legc-logo" src="${favicon(appLogo)}" alt="" onerror="this.replaceWith(document.createTextNode('${leg.mode === "cycle" ? bikeApp().emoji : "🚗"}'))">`
+    : legIcon(leg);
+  const iconBg = appLogo ? "#fff" : color;
+  // Right-side action: open the relevant app (maps / bike / cab / train tickets).
+  const act = legAction(leg);
+  const linkHtml = act
+    ? `<a class="legc-link" href="${act.url}" target="_blank" rel="noopener" aria-label="Open ${act.label}"><img class="legc-link-img" src="${favicon(act.icon)}" alt="" onerror="this.replaceWith(document.createTextNode('${act.fallback}'))"></a>`
+    : "";
   return `<li class="legc" style="--acc:${color}">
-    <span class="legc-ic" style="background:${color};color:${textOn(color)}">${legIcon(leg)}</span>
+    <span class="legc-ic" style="background:${iconBg};color:${textOn(color)}">${iconHtml}</span>
     <div class="legc-body">
       <div class="legc-title">${title}${fareChip}</div>
       ${sub ? `<div class="legc-sub">${sub}</div>` : ""}
       ${extra ? `<div class="legc-extra">${extra}</div>` : ""}
       ${cd}${freq}${disr}${stops}
     </div>
+    ${linkHtml}
   </li>`;
+}
+
+// Where a leg's right-side icon should link: the chosen maps app, the bike app,
+// the ride app, or the chosen train-ticket site — opening that exact section.
+function legAction(leg) {
+  if (leg.mode === "cycle") return { url: bikeApp().link, icon: bikeApp().icon, fallback: bikeApp().emoji, label: bikeApp().name };
+  if (leg.mode === "car") {
+    const brand = leg.brand || "uber";
+    return { url: rideLink(brand), icon: BRAND_LOGOS[brand] || "uber.com", fallback: "🚗", label: cap(brand) };
+  }
+  if (TRAIN_MODES.includes(leg.mode)) {
+    return { url: trainTicketLink(leg), icon: TRAIN_APPS[PREFS.trains].icon, fallback: "🎫", label: TRAIN_APPS[PREFS.trains].name };
+  }
+  const u = mapsLink(leg);
+  if (!u) return null;
+  return { url: u, icon: MAPS_APPS[PREFS.maps].icon, fallback: "🗺️", label: MAPS_APPS[PREFS.maps].name };
 }
 
 // Per-leg fare strings + the zone note for the (first) rail leg. Mirrors the
@@ -962,7 +1009,7 @@ function legFares(o, legs) {
   }
   let railShown = false, busShown = false;
   return legs.map((leg) => {
-    if (leg.mode === "walking") return { fare: "Free", note: "" };
+    if (leg.mode === "walking") return { fare: "", note: "" };
     if (leg.mode === "cycle") return { fare: money(parts.bikePart), note: "" };
     if (leg.mode === "car") return { fare: `${prefix}${money(parts.carPart)}`, note: "" };
     if (leg.mode === "bus") {
@@ -990,11 +1037,11 @@ function costPanel(o, legs) {
     zoneStr = `${lo === hi ? `Zone ${lo}` : `Zones ${lo}–${hi}`}, ${isPeakDate(clockTimes(o).dep) ? "peak" : "off-peak"}`;
   }
   let railShown = false; // the zone fare is one charge across all rail legs
-  const rows = legs.map((leg) => {
+  const rows = legs.filter((l) => l.mode !== "walking").map((leg) => {
     let label, val, note = "";
-    if (leg.mode === "walking" || leg.mode === "cycle") {
-      label = leg.mode === "cycle" ? "Lime Bike" : "Walk";
-      val = leg.mode === "cycle" ? money(parts.bikePart) : "Free";
+    if (leg.mode === "cycle") {
+      label = `${bikeApp().name} Bike`;
+      val = money(parts.bikePart);
     } else if (leg.mode === "car") {
       label = cap(leg.brand || "Cab");
       val = `${money(Math.round(parts.carPart * 0.85))}–${money(parts.carPart)} est.`;
@@ -1011,7 +1058,7 @@ function costPanel(o, legs) {
   }).join("");
   const perTraveller = parts.isCab ? Math.round(pence / peopleCount) : pence;
   const party = parts.isCab ? pence : pence * peopleCount;
-  const railNote = hasTrain(o.legs) && readDiscounts().railcard
+  const railNote = hasNationalRail(o.legs) && readDiscounts().railcard
     ? `<div class="cost-note">Railcard applied per eligible traveller.</div>` : "";
   const capNote = `<div class="cost-note">Single-fare estimate. TfL daily capping may make your real spend lower; cab fares are estimates and excluded from capping.</div>`;
   return `<details class="cost-panel" open>
@@ -1019,26 +1066,29 @@ function costPanel(o, legs) {
     <div class="cost-rows">${rows}</div>
     <div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}</span></div>
     <div class="cost-tot big"><span>Party total · ${peopleCount} ${peopleCount > 1 ? "people" : "person"}</span><span>${prefix}${money(party)}</span></div>
-    ${limeWorkings(legs)}${railNote}${capNote}
+    ${bikeWorkings(legs)}${railNote}${capNote}
   </details>`;
 }
 
-// Lime fare workings: pay-as-you-go vs a 30-min pass, with a return-trip tip.
-function limeWorkings(legs) {
+// Bike fare workings: pay-as-you-go vs a time pass (Lime), with a return tip.
+function bikeWorkings(legs) {
   const bike = legs.find((l) => l.mode === "cycle");
   if (!bike) return "";
   const b = bikePricing(Math.round(bike.durationMin));
   const li = [];
-  li.push(`Pay-as-you-go: ${money(b.unlockPence)} unlock + ${b.perMinPence}p/min × ${b.min} min = <b>${money(b.paygPence)}</b>`);
-  li.push(`${b.passMins}-min pass${b.passesNeeded > 1 ? ` × ${b.passesNeeded}` : ""}: <b>${money(b.passPence)}</b>`);
-  li.push(b.pass
-    ? `✓ The pass wins — you save ${money(b.paygPence - b.passPence)} on this ride.`
-    : `✓ Pay-as-you-go is cheaper for a ride this short.`);
-  if (b.returnPassCovers) {
-    const rtPayg = 2 * b.paygPence;
-    li.push(`Heading back the same way? One ${b.passMins}-min pass (${money(b.passUnitPence)}) covers there <i>and</i> back (${b.min * 2} min total) — vs ${money(rtPayg)} for two pay-as-you-go trips.`);
+  const unlock = b.unlockPence > 0 ? `${money(b.unlockPence)} unlock + ` : "no unlock, ";
+  li.push(`Pay-as-you-go: ${unlock}${b.perMinPence}p/min × ${b.min} min = <b>${money(b.paygPence)}</b>`);
+  if (b.hasPass) {
+    li.push(`${b.passMins}-min pass${b.passesNeeded > 1 ? ` × ${b.passesNeeded}` : ""}: <b>${money(b.passPence)}</b>`);
+    li.push(b.pass
+      ? `✓ The pass wins — you save ${money(b.paygPence - b.passPence)} on this ride.`
+      : `✓ Pay-as-you-go is cheaper for a ride this short.`);
+    if (b.returnPassCovers) {
+      const rtPayg = 2 * b.paygPence;
+      li.push(`Heading back the same way? One ${b.passMins}-min pass (${money(b.passUnitPence)}) covers there <i>and</i> back (${b.min * 2} min total) — vs ${money(rtPayg)} for two pay-as-you-go trips.`);
+    }
   }
-  return `<details class="cost-sub"><summary>🍋‍🟩 How the Lime fare works</summary><ul>${li.map((x) => `<li>${x}</li>`).join("")}</ul></details>`;
+  return `<details class="cost-sub"><summary>${bikeApp().emoji} How the ${b.op} fare works</summary><ul>${li.map((x) => `<li>${x}</li>`).join("")}</ul></details>`;
 }
 
 // Open the single-route page: own screen, map at top (scrolls), itinerary below.
@@ -1106,14 +1156,9 @@ async function refreshCountdown(leg, idx) {
   const el = $(`#detailContent .leg-countdown[data-leg="${idx}"]`);
   if (!el) return;
   const list = await arrivals(leg.fromId, leg.line).catch(() => []);
-  if (!list.length) {
-    el.innerHTML = `🕓 <span class="muted">Scheduled — no live prediction</span>`;
-    return;
-  }
-  const soon = list[0];
-  const mins = Math.round(soon.seconds / 60);
-  const when = mins <= 0 ? "due" : `in ${mins} min`;
-  el.innerHTML = `🟢 Departs <b>${when}</b>${soon.destination ? ` · to ${soon.destination}` : ""}`;
+  if (!list.length) { el.innerHTML = ""; return; } // no live prediction → show nothing
+  const mins = Math.round(list[0].seconds / 60);
+  el.innerHTML = `🟢 Departs <b>${mins <= 0 ? "now" : `in ${mins} min`}</b>`;
 }
 function startCountdown(legs, idx) {
   if (idx < 0) return;
@@ -1154,10 +1199,10 @@ async function loadBusFrequencies(legs, dep) {
     if (leg.mode !== "bus") continue;
     const el = $(`#detailContent .leg-freq[data-leg="${i}"]`);
     if (!el) continue;
-    let mins = null, src = "typical";
-    if (live && leg.fromId) { mins = await liveBusFreq(leg.fromId, leg.line); if (mins != null) src = "live"; }
+    let mins = null;
+    if (live && leg.fromId) mins = await liveBusFreq(leg.fromId, leg.line);
     if (mins == null) mins = typicalBusFreq(dep);
-    el.innerHTML = `🚌 ~ every <b>${mins} min</b> <span class="muted">(${src === "live" ? "live now" : "typical for this time"})</span>`;
+    el.innerHTML = `🚌 Every ~<b>${mins} min</b>`;
   }
 }
 
@@ -1213,43 +1258,6 @@ function findAlternative(leg) {
   plan();
 }
 const $$ = (s) => [...document.querySelectorAll(s)];
-
-// AI-style price breakdown shown under the route steps. Each emoji works like a
-// bullet point: the text sits inline beside it with a hanging indent.
-function priceBreakdown(o) {
-  const { pence, prefix } = priceOf(o);
-  const d = readDiscounts();
-  const parts = fareParts(o);
-  const rows = []; // [emoji, html]
-
-  const bike = o.legs.find((l) => l.mode === "cycle");
-  if (bike) {
-    const m = Math.round(bike.durationMin);
-    const p = bikePricing(m);
-    rows.push(["🍋‍🟩", p.pass
-      ? `Lime: a ${p.passMins}-min pass is cheapest here — ${money(parts.bikePart)} for ${m} min riding.`
-      : `Lime: pay-as-you-go (£1 unlock + 29p/min) is ${money(parts.bikePart)} for ${m} min riding.`]);
-  }
-
-  if (parts.isCab) {
-    rows.push(["🚗", `${cap(o.brand || "Cab")} fare is an upper estimate (the “&lt;”); you pay the live metered price in the app.`]);
-  } else {
-    if (hasTrain(o.legs)) {
-      rows.push(["🚆", d.railcard
-        ? `Train: ${money(railcardPence(parts.railPart))} with your railcard applied (${money(parts.railPart)} without). One through-ticket covers the whole train journey.`
-        : `Train: ${money(parts.railPart)} off-peak — a railcard saves ~⅓ off this (${money(railcardPence(parts.railPart))}). Buy one through-ticket for the whole train journey.`]);
-    } else if (parts.railPart > 0) {
-      rows.push(["🚇", `Tube/DLR: ${money(parts.railPart)} — a zone-based pay-as-you-go estimate.`]);
-    }
-    if (parts.busPart > 0) rows.push(["🚌", `Bus: ${money(175)} (Hopper — unlimited buses within an hour).`]);
-  }
-
-  if (!rows.length) return "";
-  const body = rows
-    .map(([em, txt]) => `<div class="ai-row"><span class="ai-em">${em}</span><span class="ai-txt">${txt}</span></div>`)
-    .join("");
-  return `<div class="ai-note"><b>✨ How we worked out ${prefix}${money(pence)}</b>${body}</div>`;
-}
 
 function closeDetail() {
   clearDetailTimers();
@@ -1406,6 +1414,13 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.36", [
+    "Each leg now has an “open app” icon on the right — bus/tube to your maps app, the bike leg to Lime/Forest, trains to Trainline/TrainPal (for that exact section), cabs to Uber/Bolt.",
+    "Custom filters: switch your maps app (Google / Citymapper / Apple), bike (Lime / Forest) and train tickets (Trainline / TrainPal).",
+    "Best result now sits at the bottom of the list, nearest the search bar.",
+    "Railcard only shows when a normal National Rail train is involved (never for tube/Overground).",
+    "Tidied labels: trains show where they terminate, tubes show the bound, bus shows “Every ~N min”, no “Free” clutter on walks.",
+  ]],
   ["0.35", [
     "Pub stop now searches around every stop you actually get on/off at (not just the first), so it finds a pub right by a station on your route.",
     "Where a pub lists its beers in OpenStreetMap, those are now shown (sparse data, so often blank).",

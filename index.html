@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="style.css?v=35" />
+  <link rel="stylesheet" href="style.css?v=36" />
 </head>
 <body>
   <header class="apphead">
@@ -20,7 +20,7 @@
       <img src="icon.svg" class="brand-logo-img" alt="" />
       <span>Quickest</span>
     </button>
-    <button class="ver" id="verPill">0.35</button>
+    <button class="ver" id="verPill">0.36</button>
   </header>
 
   <div id="changelog" class="sheet hidden">
@@ -53,7 +53,6 @@
 
     <!-- Custom tab: tweak options here, then hit Update -->
     <div id="custom" class="custom hidden">
-      <p class="custom-intro">Fine-tune your trip — set <b>travellers</b>, <b>time</b>, a <b>🍺 pub stop</b>, <b>🚆 railcard</b>, <b>♿ step-free</b> routing, and <b>🚫 modes to avoid</b>.</p>
       <div class="ex-line col">
         <span class="ex-h">👥 Travellers</span>
         <div class="seg full" id="peopleSeg">
@@ -94,6 +93,28 @@
           <label data-acc="nostairs"><input type="checkbox" />🚶 Avoid stairs</label>
         </div>
         <span class="ex-note">Routes via step-free stations where TfL confirms them. Saved for next time.</span>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">🗺️ Maps app</span>
+        <div class="seg full" id="mapsSeg">
+          <button type="button" data-maps="google" class="on">Google</button>
+          <button type="button" data-maps="citymapper">Citymapper</button>
+          <button type="button" data-maps="apple">Apple</button>
+        </div>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">🚲 Bike</span>
+        <div class="seg full" id="bikeSeg">
+          <button type="button" data-bike="lime" class="on">Lime</button>
+          <button type="button" data-bike="forest">Forest</button>
+        </div>
+      </div>
+      <div class="ex-line col">
+        <span class="ex-h">🎫 Train tickets</span>
+        <div class="seg full" id="trainSeg">
+          <button type="button" data-trains="trainline" class="on">Trainline</button>
+          <button type="button" data-trains="trainpal">TrainPal</button>
+        </div>
       </div>
       <div class="ex-line col">
         <span class="ex-h">🚫 Avoid</span>
@@ -155,6 +176,6 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script type="module" src="app.js?v=35"></script>
+  <script type="module" src="app.js?v=36"></script>
 </body>
 </html>
