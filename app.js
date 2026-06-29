@@ -125,26 +125,19 @@ setBikeOp(PREFS.bike);
 const MAPS_APPS = {
   google: { name: "Google Maps", icon: "google.com/maps" },
   citymapper: { name: "Citymapper", icon: "citymapper.com" },
-  apple: { name: "Apple Maps", icon: "apple.com" },
 };
 const BIKE_APPS = {
-  lime: { name: "Lime", icon: "li.me", link: "https://www.li.me/", emoji: "🍋‍🟩" },
-  forest: { name: "Forest", icon: "humanforest.co.uk", link: "https://www.humanforest.co.uk/", emoji: "🌳" },
+  // Lime app universal link (opens the app if installed, else the store).
+  lime: { name: "Lime", icon: "li.me", link: "https://limebike.app.link/", emoji: "🍋‍🟩" },
+  forest: { name: "Forest", icon: "humanforest.co.uk", link: "https://humanforest.onelink.me/", emoji: "🌳" },
 };
-const TRAIN_APPS = {
-  trainline: { name: "Trainline", icon: "thetrainline.com" },
-  trainpal: { name: "TrainPal", icon: "trainpal.com" },
-};
+const TRAIN_APPS = { trainline: { name: "Trainline", icon: "thetrainline.com" } };
 const bikeApp = () => BIKE_APPS[PREFS.bike] || BIKE_APPS.lime;
 
 const slug = (s) => cleanName(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-// Train ticket link for one section (from → to), via the chosen provider.
+// Trainline link for one section (from → to).
 function trainTicketLink(leg) {
   const from = cleanName(leg.from || ""), to = cleanName(leg.to || "");
-  if (PREFS.trains === "trainpal") {
-    if (!from || !to) return "https://www.trainpal.com/";
-    return `https://www.trainpal.com/ticket/search?departureName=${encodeURIComponent(from)}&arrivalName=${encodeURIComponent(to)}`;
-  }
   if (!from || !to) return "https://www.thetrainline.com/";
   return `https://www.thetrainline.com/train-times/${slug(from)}-to-${slug(to)}`;
 }
@@ -320,7 +313,6 @@ function wireProviderSeg(id, key, onChange) {
   });
 }
 wireProviderSeg("#mapsSeg", "maps");
-wireProviderSeg("#trainSeg", "trains");
 wireProviderSeg("#bikeSeg", "bike", () => setBikeOp(PREFS.bike)); // affects pricing → re-plan on Update
 
 const avoidedModes = () =>
@@ -587,13 +579,6 @@ function mapsLink(leg) {
     if (a && b && a.lat != null && b.lat != null)
       return `https://citymapper.com/directions?startcoord=${a.lat}%2C${a.lon}&endcoord=${b.lat}%2C${b.lon}`;
     return "https://citymapper.com/";
-  }
-  if (PREFS.maps === "apple") {
-    const flg = mode === "driving" ? "d" : mode === "walking" ? "w" : "r";
-    const daddr = b && b.lat != null ? `${b.lat},${b.lon}` : pointQuery(leg.toLL, leg.to);
-    if (!daddr) return null;
-    const saddr = a && a.lat != null ? `${a.lat},${a.lon}` : "";
-    return `https://maps.apple.com/?daddr=${daddr}${saddr ? `&saddr=${saddr}` : ""}&dirflg=${flg}`;
   }
   // Google Maps (default)
   const dest = pointQuery(leg.toLL, leg.to);
@@ -952,7 +937,6 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
     ? `<div class="leg-disr" data-line="${leg.lineId}" hidden></div>` : "";
   const stops = leg.stops && leg.stops.length > 2
     ? `<details class="leg-stops"><summary>${leg.stops.length} stops</summary><ol>${leg.stops.map((s) => `<li>${s}</li>`).join("")}</ol></details>` : "";
-  const fareChip = fare ? `<span class="legc-fare">${fare}</span>` : "";
   // Operator/app icon: real logos for Lime/Forest & cabs; mode emoji otherwise.
   const appLogo = leg.mode === "cycle" ? bikeApp().icon
     : leg.mode === "car" ? (BRAND_LOGOS[leg.brand] || "uber.com") : null;
@@ -968,7 +952,7 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
   return `<li class="legc" style="--acc:${color}">
     <span class="legc-ic" style="background:${iconBg};color:${textOn(color)}">${iconHtml}</span>
     <div class="legc-body">
-      <div class="legc-title">${title}${fareChip}</div>
+      <div class="legc-title">${title}</div>
       ${sub ? `<div class="legc-sub">${sub}</div>` : ""}
       ${extra ? `<div class="legc-extra">${extra}</div>` : ""}
       ${cd}${freq}${disr}${stops}
@@ -1036,41 +1020,34 @@ function costPanel(o, legs) {
     const lo = Math.min(fz, tz), hi = Math.max(fz, tz);
     zoneStr = `${lo === hi ? `Zone ${lo}` : `Zones ${lo}–${hi}`}, ${isPeakDate(clockTimes(o).dep) ? "peak" : "off-peak"}`;
   }
-  let railShown = false; // the zone fare is one charge across all rail legs
-  const rows = legs.filter((l) => l.mode !== "walking").map((leg) => {
-    let label, val, note = "";
-    if (leg.mode === "cycle") {
-      label = `${bikeApp().name} Bike`;
-      val = money(parts.bikePart);
-    } else if (leg.mode === "car") {
-      label = cap(leg.brand || "Cab");
-      val = `${money(Math.round(parts.carPart * 0.85))}–${money(parts.carPart)} est.`;
-    } else if (leg.mode === "bus") {
-      label = "Bus";
-      val = money(parts.busPart || 175);
-    } else {
-      label = leg.line || cap(leg.mode);
-      if (!railShown) { railShown = true; val = money(parts.railPart); note = zoneStr; }
-      else val = `<span class="muted">included</span>`;
-    }
-    const tag = note ? ` <span class="muted">· ${note}</span>` : "";
-    return `<div class="cost-row"><span>${legIcon(leg)} ${label}${tag}</span><span>${val}</span></div>`;
-  }).join("");
+  // Merged calculator: one line per mode group (all tube/rail combined), no per-leg.
+  const rows = [];
+  if (legs.some((l) => l.mode === "cycle"))
+    rows.push([bikeApp().emoji, `${bikeApp().name} Bike`, money(parts.bikePart)]);
+  if (parts.railPart > 0)
+    rows.push(["🚆", `Tube / Rail${zoneStr ? ` <span class="muted">· ${zoneStr}</span>` : ""}`, money(parts.railPart)]);
+  if (parts.busPart > 0) rows.push(["🚌", "Bus", money(parts.busPart)]);
+  if (parts.carPart > 0)
+    rows.push(["🚗", cap(o.brand || "Cab"), `${money(Math.round(parts.carPart * 0.85))}–${money(parts.carPart)} est.`]);
+  const rowsHtml = rows.map(([e, l, v]) => `<div class="cost-row"><span>${e} ${l}</span><span>${v}</span></div>`).join("");
+
   const perTraveller = parts.isCab ? Math.round(pence / peopleCount) : pence;
-  const party = parts.isCab ? pence : pence * peopleCount;
+  const total = parts.isCab ? pence : pence * peopleCount; // whole party
+  const perRow = peopleCount > 1
+    ? `<div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}</span></div>` : "";
   const railNote = hasNationalRail(o.legs) && readDiscounts().railcard
     ? `<div class="cost-note">Railcard applied per eligible traveller.</div>` : "";
   const capNote = `<div class="cost-note">Single-fare estimate. TfL daily capping may make your real spend lower; cab fares are estimates and excluded from capping.</div>`;
   return `<details class="cost-panel" open>
     <summary>Cost breakdown</summary>
-    <div class="cost-rows">${rows}</div>
-    <div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}</span></div>
-    <div class="cost-tot big"><span>Party total · ${peopleCount} ${peopleCount > 1 ? "people" : "person"}</span><span>${prefix}${money(party)}</span></div>
-    ${bikeWorkings(legs)}${railNote}${capNote}
+    <div class="cost-rows">${rowsHtml}</div>
+    ${perRow}
+    <div class="cost-tot big"><span>Total</span><span>${prefix}${money(total)}</span></div>
+    ${bikeWorkings(legs)}${bikeReturnAlert(legs)}${railNote}${capNote}
   </details>`;
 }
 
-// Bike fare workings: pay-as-you-go vs a time pass (Lime), with a return tip.
+// Bike fare workings: pay-as-you-go vs a time pass.
 function bikeWorkings(legs) {
   const bike = legs.find((l) => l.mode === "cycle");
   if (!bike) return "";
@@ -1083,12 +1060,18 @@ function bikeWorkings(legs) {
     li.push(b.pass
       ? `✓ The pass wins — you save ${money(b.paygPence - b.passPence)} on this ride.`
       : `✓ Pay-as-you-go is cheaper for a ride this short.`);
-    if (b.returnPassCovers) {
-      const rtPayg = 2 * b.paygPence;
-      li.push(`Heading back the same way? One ${b.passMins}-min pass (${money(b.passUnitPence)}) covers there <i>and</i> back (${b.min * 2} min total) — vs ${money(rtPayg)} for two pay-as-you-go trips.`);
-    }
   }
   return `<details class="cost-sub"><summary>${bikeApp().emoji} How the ${b.op} fare works</summary><ul>${li.map((x) => `<li>${x}</li>`).join("")}</ul></details>`;
+}
+
+// Lime return-trip tip — its own lime-green alert, below the bike calculation.
+function bikeReturnAlert(legs) {
+  const bike = legs.find((l) => l.mode === "cycle");
+  if (!bike) return "";
+  const b = bikePricing(Math.round(bike.durationMin));
+  if (!b.returnPassCovers) return "";
+  const rtPayg = 2 * b.paygPence;
+  return `<div class="lime-alert">${bikeApp().emoji} Heading back the same way? One ${b.passMins}-min pass (${money(b.passUnitPence)}) covers there <b>and</b> back (${b.min * 2} min total) — vs ${money(rtPayg)} for two pay-as-you-go trips.</div>`;
 }
 
 // Open the single-route page: own screen, map at top (scrolls), itinerary below.
@@ -1227,10 +1210,7 @@ async function loadDisruptions(legs) {
       banner.className = `disr-banner ${SEV(worst.severity)}`;
       banner.innerHTML =
         `<b>⚠️ ${bad.map((b) => b.name).join(", ")}: ${worst.description}</b>` +
-        (worst.reason ? `<div class="disr-reason">${worst.reason}</div>` : "") +
-        `<button class="disr-alt" type="button">Find alternative</button>`;
-      const alt = banner.querySelector(".disr-alt");
-      if (alt) alt.onclick = () => findAlternative(legs.find((l) => l.lineId === worst.id));
+        (worst.reason ? `<div class="disr-reason">${worst.reason}</div>` : "");
     }
     // per-leg badges (match by attribute value safely, no selector injection)
     const byId = new Map(bad.map((s) => [s.id, s]));
@@ -1414,6 +1394,11 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.37", [
+    "Cleaner cost breakdown: per-leg prices removed from the itinerary; the bottom calculator merges all tube/rail into one line and shows a single Total (with Per-traveller only when in a group).",
+    "The Lime pass return-trip tip now sits in its own lime-green box under the bike calculation.",
+    "Removed TrainPal and Apple Maps options, and the disruption ‘Find alternative’ button. Lime icon opens the Lime app.",
+  ]],
   ["0.36", [
     "Each leg now has an “open app” icon on the right — bus/tube to your maps app, the bike leg to Lime/Forest, trains to Trainline/TrainPal (for that exact section), cabs to Uber/Bolt.",
     "Custom filters: switch your maps app (Google / Citymapper / Apple), bike (Lime / Forest) and train tickets (Trainline / TrainPal).",
