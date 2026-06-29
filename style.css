@@ -435,6 +435,8 @@ body.has-results .splash { display: none; }
 .cost-tot { font-weight: 700; border-top: 1px solid var(--line); margin-top: 4px; }
 .cost-tot.big { font-size: 15px; font-weight: 800; }
 .cost-note { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 8px; }
+.cost-note a, .train-note a { color: var(--brand); font-weight: 700; text-decoration: none; }
+.train-note { color: var(--ink); }
 .cost-sub { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .cost-sub summary { font-weight: 700; font-size: 13px; cursor: pointer; color: var(--accent-dark); }
 .cost-sub ul { margin: 8px 0 0; padding-left: 18px; }

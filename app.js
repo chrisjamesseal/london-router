@@ -732,32 +732,35 @@ function fareParts(o) {
 function priceOf(o) {
   const d = readDiscounts();
   const parts = fareParts(o);
-  const trainy = hasNationalRail(o.legs); // railcard only for normal trains
+  // National Rail fares aren't zonal and TfL doesn't return them, so we can't
+  // show a reliable price — flag those with "*" and point to Trainline.
+  const trainEst = hasNationalRail(o.legs) && !o.synthetic;
   let pence = o.costPence;
   let railHint = "";
-  if (trainy && !o.synthetic) {
-    // Railcard takes ~1/3 off the train fare only — leave bike/tube/bus alone.
-    const saving = parts.railPart - railcardPence(parts.railPart);
-    if (d.railcard) { pence -= saving; railHint = `<small class="rail">railcard ✓</small>`; }
-    else railHint = `<small class="rail">${money(o.costPence - saving)} w/ railcard</small>`;
+  // Railcard: 1/3 off the train fare only, and only when toggled on. No text
+  // unless there's a genuine National Rail train in the route.
+  if (trainEst && d.railcard) {
+    pence -= parts.railPart - railcardPence(parts.railPart);
+    railHint = `<small class="rail">railcard ✓</small>`;
   }
-  return { pence, prefix: parts.isCab ? "&lt;" : "", railHint }; // "<" = estimated, up-to fare
+  return { pence, prefix: parts.isCab ? "&lt;" : "", railHint, trainEst };
 }
 
 // Time/price block reused by the list cards and the single-route page.
 function summaryHTML(o) {
   const timeBlock = `<div class="time">${fmtMin(o.durationMin)}</div>`;
-  const { pence, prefix, railHint } = priceOf(o);
+  const { pence, prefix, railHint, trainEst } = priceOf(o);
+  const star = trainEst ? "*" : ""; // "*" = includes a train fare we can't fetch
   // Show "pp" (per person) whenever there's more than one traveller. Cabs split
   // the fare — per-person big, total underneath; transit fares are already pp.
   const pp = peopleCount > 1 && pence > 0;
   const ppTag = pp ? ` <small class="pp">pp</small>` : "";
   let priceMain, priceSub = "";
   if (o.brand && pp) {
-    priceMain = prefix + money(Math.round(pence / peopleCount)) + ppTag;
-    priceSub = `${prefix}${money(pence)} total`;
+    priceMain = prefix + money(Math.round(pence / peopleCount)) + star + ppTag;
+    priceSub = `${prefix}${money(pence)}${star} total`;
   } else {
-    priceMain = prefix + money(pence) + ppTag;
+    priceMain = prefix + money(pence) + star + ppTag;
   }
   // Pub icon (no name) appears in the summary; the name shows on the route page.
   const legChips = o.legs.map(legChip);
@@ -803,6 +806,17 @@ function renderResults() {
       : () => openDetail(o);
     wrap.appendChild(card);
   });
+
+  // Footnote explaining the "*" when any route uses a National Rail train.
+  const trainOpt = movers.find((o) => hasNationalRail(o.legs) && !o.synthetic);
+  if (trainOpt) {
+    const tleg = trainOpt.legs.find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
+    const link = tleg ? trainTicketLink(tleg) : "https://www.thetrainline.com/";
+    const note = document.createElement("p");
+    note.className = "smallprint train-note";
+    note.innerHTML = `* Train fares can't be fetched live — <a href="${link}" target="_blank" rel="noopener">find them on Trainline →</a>`;
+    wrap.appendChild(note);
+  }
 
   const sp = document.createElement("p");
   sp.className = "smallprint";
@@ -1007,7 +1021,8 @@ function legFares(o, legs) {
 // A4: cost breakdown per leg and per traveller, with capping caveat.
 function costPanel(o, legs) {
   const parts = fareParts(o);
-  const { pence, prefix } = priceOf(o);
+  const { pence, prefix, trainEst } = priceOf(o);
+  const star = trainEst ? "*" : "";
   // Zone label for the tube/rail portion (one PAYG fare covers all the rail legs).
   const railLegs = legs.filter((l) => RAIL_MODES.includes(l.mode));
   let zoneStr = "";
@@ -1022,8 +1037,11 @@ function costPanel(o, legs) {
   const rows = [];
   if (legs.some((l) => l.mode === "cycle"))
     rows.push([bikeApp().emoji, `${bikeApp().name} Bike`, money(parts.bikePart)]);
-  if (parts.railPart > 0)
-    rows.push(["🚆", `Tube / Rail${zoneStr ? ` <span class="muted">· ${zoneStr}</span>` : ""}`, money(parts.railPart)]);
+  if (parts.railPart > 0) {
+    // Railcard (when on, train route) takes 1/3 off the train fare shown here.
+    const railVal = (trainEst && readDiscounts().railcard) ? railcardPence(parts.railPart) : parts.railPart;
+    rows.push(["🚆", `${trainEst ? "Train" : "Tube / Rail"}${zoneStr && !trainEst ? ` <span class="muted">· ${zoneStr}</span>` : ""}`, money(railVal) + star]);
+  }
   if (parts.busPart > 0) rows.push(["🚌", "Bus", money(parts.busPart)]);
   if (parts.carPart > 0)
     rows.push(["🚗", cap(o.brand || "Cab"), `${money(Math.round(parts.carPart * 0.85))}–${money(parts.carPart)} est.`]);
@@ -1032,16 +1050,21 @@ function costPanel(o, legs) {
   const perTraveller = parts.isCab ? Math.round(pence / peopleCount) : pence;
   const total = parts.isCab ? pence : pence * peopleCount; // whole party
   const perRow = peopleCount > 1
-    ? `<div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}</span></div>` : "";
-  const railNote = hasNationalRail(o.legs) && readDiscounts().railcard
-    ? `<div class="cost-note">Railcard applied per eligible traveller.</div>` : "";
+    ? `<div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}${star}</span></div>` : "";
+  // Train fares can't be fetched — asterisk note + Trainline link for that section.
+  const trainLeg = legs.find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
+  const trainNote = trainEst
+    ? `<div class="cost-note">* We can't fetch live train fares. <a href="${trainLeg ? trainTicketLink(trainLeg) : "https://www.thetrainline.com/"}" target="_blank" rel="noopener">Find the exact price on Trainline →</a></div>`
+    : "";
+  const railNote = trainEst && readDiscounts().railcard
+    ? `<div class="cost-note">⅓ railcard discount applied to the train fare.</div>` : "";
   const capNote = `<div class="cost-note">Single-fare estimate. TfL daily capping may make your real spend lower; cab fares are estimates and excluded from capping.</div>`;
   return `<details class="cost-panel" open>
     <summary>Cost breakdown</summary>
     <div class="cost-rows">${rowsHtml}</div>
     ${perRow}
-    <div class="cost-tot big"><span>Total</span><span>${prefix}${money(total)}</span></div>
-    ${bikeWorkings(legs)}${bikeReturnAlert(legs)}${railNote}${capNote}
+    <div class="cost-tot big"><span>Total</span><span>${prefix}${money(total)}${star}</span></div>
+    ${bikeWorkings(legs)}${bikeReturnAlert(legs)}${trainNote}${railNote}${capNote}
   </details>`;
 }
 
@@ -1098,14 +1121,14 @@ function openDetail(o) {
   }
 
   const { dep, arr } = clockTimes(o);
-  const { pence, prefix } = priceOf(o);
+  const { pence, prefix, trainEst } = priceOf(o);
   const accActive = !o.synthetic && !!accessPreference();
   $("#detailContent").innerHTML = `
     <div class="disr-banner" id="disrBanner" hidden></div>
     <div class="itin-head">
       <div class="itin-row">
         <div class="itin-time">${fmtMin(o.durationMin)}</div>
-        <div class="itin-cost">${prefix}${money(pence)}${peopleCount > 1 && pence > 0 ? " <small>pp</small>" : ""}</div>
+        <div class="itin-cost">${prefix}${money(pence)}${trainEst ? "*" : ""}${peopleCount > 1 && pence > 0 ? " <small>pp</small>" : ""}</div>
       </div>
       <div class="itin-meta">${fmtClock(dep)} → ${fmtClock(arr)} · ${modeSummary(legs)}</div>
       ${accActive ? '<div class="itin-acc">♿ Step-free routing requested</div>' : ""}
@@ -1392,6 +1415,10 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.39", [
+    "Routes with a National Rail train now mark the price with a “*” and link you straight to Trainline for that route (live train fares can't be fetched).",
+    "Railcard now only discounts the train fare (never tube), only when you toggle it on, and the railcard text is hidden unless a real train is in the route.",
+  ]],
   ["0.38", [
     "Best option is back at the top of the results list.",
   ]],
