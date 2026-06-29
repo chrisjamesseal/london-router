@@ -73,6 +73,44 @@ const RAIL_MODES = ["tube", "dlr", "overground", "elizabeth-line", "national-rai
 const favicon = (domain) => `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
 const BRAND_LOGOS = { uber: "uber.com", bolt: "bolt.eu" };
 
+// Beers/ciders we can show a logo for — only used to LABEL drinks a pub actually
+// lists in OpenStreetMap (never a guess). OSM coverage is sparse, so this is
+// best-effort and only shown when present.
+const DRINK_LOGOS = [
+  { key: "guinness", name: "Guinness", domain: "guinness.com" },
+  { key: "camden", name: "Camden", domain: "camdentownbrewery.com" },
+  { key: "neck oil", name: "Neck Oil", domain: "beavertownbrewery.co.uk" },
+  { key: "beavertown", name: "Beavertown", domain: "beavertownbrewery.co.uk" },
+  { key: "lager", name: "Lager", domain: "" },
+  { key: "peroni", name: "Peroni", domain: "peroni.co.uk" },
+  { key: "moretti", name: "Birra Moretti", domain: "birramoretti.co.uk" },
+  { key: "stella", name: "Stella Artois", domain: "stellaartois.com" },
+  { key: "estrella", name: "Estrella", domain: "estrelladamm.com" },
+  { key: "madri", name: "Madrí", domain: "madriexcepcional.com" },
+  { key: "amstel", name: "Amstel", domain: "amstel.com" },
+  { key: "heineken", name: "Heineken", domain: "heineken.com" },
+  { key: "asahi", name: "Asahi", domain: "asahibeer.co.uk" },
+  { key: "london pride", name: "London Pride", domain: "fullers.co.uk" },
+  { key: "fuller", name: "Fuller's", domain: "fullers.co.uk" },
+  { key: "doom bar", name: "Doom Bar", domain: "sharpsbrewery.co.uk" },
+  { key: "pravha", name: "Pravha", domain: "" },
+  { key: "carling", name: "Carling", domain: "carling.com" },
+  { key: "cruzcampo", name: "Cruzcampo", domain: "cruzcampo.com" },
+  { key: "carlsberg", name: "Carlsberg", domain: "carlsberg.co.uk" },
+  { key: "san miguel", name: "San Miguel", domain: "sanmiguel.co.uk" },
+  { key: "staropramen", name: "Staropramen", domain: "staropramen.com" },
+  { key: "aspall", name: "Aspall", domain: "aspall.co.uk" },
+  { key: "thatcher", name: "Thatchers", domain: "thatcherscider.co.uk" },
+  { key: "strongbow", name: "Strongbow", domain: "strongbow.co.uk" },
+  { key: "rekorderlig", name: "Rekorderlig", domain: "rekorderlig.com" },
+  { key: "inch", name: "Inch's", domain: "inchescider.com" },
+];
+const drinkMatch = (text) => {
+  const n = (text || "").toLowerCase();
+  return DRINK_LOGOS.find((d) => d.key !== "lager" && d.key !== "pravha" && n.includes(d.key)) ||
+    DRINK_LOGOS.find((d) => n.includes(d.key)) || null;
+};
+
 // Load the parking-bay dataset once (cached by the service worker after first
 // visit). Kick it off immediately so it's ready by the time you plan.
 // Resilient JSON loader: a failed/garbled response surfaces as a clean rejection
@@ -283,31 +321,71 @@ function resolve(input) {
   return geocode(str);
 }
 
-// Nearest real (named) pub to a point, with its address for a precise Maps link.
-// Nearest pub within a 15-min walk (~1200 m) of the boarding station.
-async function findPub(lat, lon) {
-  const q = `[out:json][timeout:10];node(around:1200,${lat},${lon})[amenity=pub][name];out 30;`;
+// Metres between two lat/lon points (equirectangular — fine at city scale).
+function metresBetween(aLat, aLon, bLat, bLon) {
+  const dy = (aLat - bLat) * 111000;
+  const dx = (aLon - bLon) * 111000 * Math.cos((aLat * Math.PI) / 180);
+  return Math.hypot(dx, dy);
+}
+
+// Pull the drinks a pub lists in OpenStreetMap (brand/brewery/real ale tags).
+function pubDrinks(t) {
+  const out = [];
+  for (const k of ["brand", "brewery", "drink:beer", "beer", "drink:cider", "real_ale", "microbrewery"]) {
+    const v = t[k];
+    if (v && v !== "yes" && v !== "no") out.push(...String(v).split(/[;,]/).map((s) => s.trim()));
+  }
+  if ((t["real_ale"] === "yes" || t["microbrewery"] === "yes")) out.push("real ale");
+  return out;
+}
+
+// Nearest named pub to ANY of the given stations (each searched within ~700 m,
+// a ~9-min walk), returning the pub closest to a station the route actually uses.
+async function findPub(stops) {
+  if (!stops || !stops.length) return null;
+  const clauses = stops
+    .map((s) => `node(around:700,${s.lat},${s.lon})[amenity=pub][name];`)
+    .join("");
+  const q = `[out:json][timeout:12];(${clauses});out 80;`;
   const ctrl = new AbortController();
-  const t0 = setTimeout(() => ctrl.abort(), 8000);
+  const t0 = setTimeout(() => ctrl.abort(), 9000);
   try {
     const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: q, signal: ctrl.signal });
     const j = await r.json();
-    const pubs = (j.elements || []).filter((e) => e.tags?.name);
+    const pubs = (j.elements || []).filter((e) => e.tags?.name && e.lat != null);
     if (!pubs.length) return null;
-    const metres = (e) => {
-      const dy = (e.lat - lat) * 111000;
-      const dx = (e.lon - lon) * 111000 * Math.cos((lat * Math.PI) / 180);
-      return Math.hypot(dx, dy);
-    };
-    const best = pubs.map((e) => ({ e, d: metres(e) })).sort((a, b) => a.d - b.d)[0];
-    const e = best.e, t = e.tags;
+    // For each pub, the nearest route station (and the walk to it).
+    const scored = pubs.map((e) => {
+      let best = Infinity, near = stops[0];
+      for (const s of stops) {
+        const d = metresBetween(e.lat, e.lon, s.lat, s.lon);
+        if (d < best) { best = d; near = s; }
+      }
+      return { e, d: best, near };
+    }).sort((a, b) => a.d - b.d);
+    const { e, d, near } = scored[0];
+    const t = e.tags;
     const addr = [t["addr:housenumber"], t["addr:street"], t["addr:postcode"]].filter(Boolean).join(" ");
-    return { name: t.name, lat: e.lat, lon: e.lon, addr, metres: Math.round(best.d) };
+    return { name: t.name, lat: e.lat, lon: e.lon, addr, metres: Math.round(d), stopName: near.name, drinks: pubDrinks(t) };
   } catch {
     return null;
   } finally {
     clearTimeout(t0);
   }
+}
+
+// The stations this route uses (board points of each transit leg + final alight),
+// so a pub can sit near a stop you'd actually get on/off at.
+function transitStops(o) {
+  const stops = [];
+  const add = (name, ll) => { if (ll && ll.lat != null) stops.push({ name: cleanName(name) || "the stop", lat: ll.lat, lon: ll.lon }); };
+  if (o.dropoffBay) add("the bike drop-off", o.dropoffBay);
+  const transit = o.legs.filter((l) => BOARD_MODES.includes(l.mode));
+  for (const l of transit) add(l.from, l.fromLL);
+  const last = transit[transit.length - 1];
+  if (last) add(last.to, last.toLL);
+  // De-dupe near-identical points.
+  return stops.filter((s, i) => stops.findIndex((x) => metresBetween(s.lat, s.lon, x.lat, x.lon) < 120) === i).slice(0, 6);
 }
 
 // C3: render a recoverable state into the results area (no silent blank screens).
@@ -811,6 +889,19 @@ function clockTimes(o) {
 }
 const countChanges = (legs) => Math.max(0, legs.filter(TRANSIT_LEG).length - 1);
 
+// Friendly summary of the vehicles used, e.g. "Tube · Bus" or "Lime Bike · Train".
+const MODE_NAME = {
+  tube: "Tube", bus: "Bus", dlr: "DLR", overground: "Overground",
+  "elizabeth-line": "Elizabeth line", tram: "Tram", "national-rail": "Train",
+  train: "Train", thameslink: "Train", cycle: "Lime Bike", car: "Cab",
+};
+function modeSummary(legs) {
+  const seq = legs.filter((l) => l.mode !== "walking").map((l) => MODE_NAME[l.mode] || cap(l.mode));
+  const out = [];
+  for (const m of seq) if (out[out.length - 1] !== m) out.push(m);
+  return out.length ? out.join(" · ") : "On foot";
+}
+
 // One leg of the itinerary, with line-colour accent, board/alight, walk time,
 // the leg's fare, a live-countdown / bus-frequency slot, and expandable stops.
 function legCard(leg, idx, firstTransitIdx, fare, note) {
@@ -822,7 +913,7 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
     title = leg.toDest ? `Walk to ${cleanName(leg.to).split(",")[0]}` : `Walk · ${fmtMin(n)}`;
     sub = leg.toDest ? "" : leg.to ? `to ${cleanName(leg.to).split(",")[0]}` : "";
   } else if (leg.mode === "cycle") {
-    title = `Cycle · ${fmtMin(n)}`;
+    title = `Lime Bike · ${fmtMin(n)}`;
     sub = leg.to ? `to ${cleanName(leg.to)}` : "";
   } else if (leg.mode === "car") {
     title = `${cap(leg.brand || "Cab")} · ${fmtMin(n)}`;
@@ -902,7 +993,7 @@ function costPanel(o, legs) {
   const rows = legs.map((leg) => {
     let label, val, note = "";
     if (leg.mode === "walking" || leg.mode === "cycle") {
-      label = leg.mode === "cycle" ? "Cycle" : "Walk";
+      label = leg.mode === "cycle" ? "Lime Bike" : "Walk";
       val = leg.mode === "cycle" ? money(parts.bikePart) : "Free";
     } else if (leg.mode === "car") {
       label = cap(leg.brand || "Cab");
@@ -985,7 +1076,7 @@ function openDetail(o) {
         <div class="itin-time">${fmtMin(o.durationMin)}</div>
         <div class="itin-cost">${prefix}${money(pence)}${peopleCount > 1 && pence > 0 ? " <small>pp</small>" : ""}</div>
       </div>
-      <div class="itin-meta">${fmtClock(dep)} → ${fmtClock(arr)} · ${countChanges(legs)} change${countChanges(legs) === 1 ? "" : "s"}</div>
+      <div class="itin-meta">${fmtClock(dep)} → ${fmtClock(arr)} · ${modeSummary(legs)}</div>
       ${accActive ? '<div class="itin-acc">♿ Step-free routing requested</div>' : ""}
     </div>
     <ol class="legs-list">${cards.join("")}</ol>
@@ -1246,20 +1337,30 @@ async function loadPub(o) {
   const step = $("#detailContent .pub-step");
   if (!step) return;
   const O = lastResult.origin, D = lastResult.dest;
-  const board =
-    o.dropoffBay ||
-    (o.legs.find((l) => BOARD_MODES.includes(l.mode)) || {}).fromLL ||
-    { lat: (O.lat + D.lat) / 2, lon: (O.lon + D.lon) / 2 };
-  if (!o._pub) o._pub = (await findPub(board.lat, board.lon)) || { name: null };
-  const body = step.querySelector(".step-body");
+  let stops = transitStops(o);
+  if (!stops.length) stops = [{ name: "your route", lat: (O.lat + D.lat) / 2, lon: (O.lon + D.lon) / 2 }];
+  if (!o._pub) o._pub = (await findPub(stops)) || { name: null };
+  const body = step.querySelector(".legc-body");
+  if (!body) return;
   const pub = o._pub;
-  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No pub within a 15-min walk</div>');
+  if (!pub.name) return (body.innerHTML = '<div class="pub-name">No pub within a short walk of a stop</div>');
   emojiMarker(pub.lat, pub.lon, "🍺", pub.name).addTo(layers); // show on the map
   const query = encodeURIComponent([pub.name, pub.addr].filter(Boolean).join(", "));
   const gmaps = `https://www.google.com/maps/search/?api=1&query=${query}`;
+  // Label any drinks the pub actually lists in OSM (best-effort; usually empty).
+  const seen = new Set();
+  const beers = [];
+  for (const d of pub.drinks || []) {
+    const m = drinkMatch(d);
+    if (m && m.domain && !seen.has(m.name)) { seen.add(m.name); beers.push(m); }
+  }
+  const beerHtml = beers.length
+    ? `<ul class="pub-beers">${beers.slice(0, 8).map((m) => `<li><img class="beer-logo" src="${favicon(m.domain)}" alt="" onerror="this.remove()"> ${m.name}</li>`).join("")}</ul>`
+    : "";
   body.innerHTML = `
     <a class="pub-name" href="${gmaps}" target="_blank" rel="noopener">${pub.name} ↗</a>
-    <div class="step-sub">${walkMin(pub.metres || 0)} min walk from the station</div>`;
+    <div class="step-sub">${walkMin(pub.metres || 0)} min walk from ${pub.stopName || "the stop"}</div>
+    ${beerHtml}`;
 }
 
 // Tabs: Fastest / Cheapest re-rank the list; Custom shows the controls.
@@ -1305,6 +1406,12 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.35", [
+    "Pub stop now searches around every stop you actually get on/off at (not just the first), so it finds a pub right by a station on your route.",
+    "Where a pub lists its beers in OpenStreetMap, those are now shown (sparse data, so often blank).",
+    "“Cycle” is now “Lime Bike”; the route header shows the vehicles used (e.g. “Tube · Bus”) instead of “0 changes”.",
+    "Cab cost now clearly splits per traveller; clearer Custom (Filters) tab.",
+  ]],
   ["0.34", [
     "Each leg of the route now shows its own fare — the tube/rail price (with its zones) sits right on the leg, not just in the breakdown.",
     "Bus legs show how often the bus runs on average — live frequency when you're travelling now, or a typical figure for the time and day you searched.",

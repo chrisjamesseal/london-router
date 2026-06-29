@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="style.css?v=34" />
+  <link rel="stylesheet" href="style.css?v=35" />
 </head>
 <body>
   <header class="apphead">
@@ -20,7 +20,7 @@
       <img src="icon.svg" class="brand-logo-img" alt="" />
       <span>Quickest</span>
     </button>
-    <button class="ver" id="verPill">0.34</button>
+    <button class="ver" id="verPill">0.35</button>
   </header>
 
   <div id="changelog" class="sheet hidden">
@@ -47,12 +47,13 @@
       </button>
       <button class="tab" data-sort="custom" role="tab">
         <span class="tab-k">Custom</span>
-        <span class="tab-v tab-new">New</span>
+        <span class="tab-v tab-new">Filters</span>
       </button>
     </div>
 
     <!-- Custom tab: tweak options here, then hit Update -->
     <div id="custom" class="custom hidden">
+      <p class="custom-intro">Fine-tune your trip — set <b>travellers</b>, <b>time</b>, a <b>🍺 pub stop</b>, <b>🚆 railcard</b>, <b>♿ step-free</b> routing, and <b>🚫 modes to avoid</b>.</p>
       <div class="ex-line col">
         <span class="ex-h">👥 Travellers</span>
         <div class="seg full" id="peopleSeg">
@@ -76,9 +77,9 @@
       <div class="ex-line col">
         <span class="ex-h">🍺 Pub Stop</span>
         <div class="avoid" id="pubStop">
-          <label data-pub="on"><input type="checkbox" id="pubChk" />🍺 Add a pub stop</label>
+          <label data-pub="on"><input type="checkbox" id="pubChk" />🍺 Add a Pub Stop</label>
         </div>
-        <span class="ex-note">Drops in the nearest pub within a 15 min walk (not added to your journey time).</span>
+        <span class="ex-note">Drops in the nearest pub by a stop on your route (not added to your journey time).</span>
       </div>
       <div class="ex-line col">
         <span class="ex-h">💳 Discounts</span>
@@ -154,6 +155,6 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script type="module" src="app.js?v=34"></script>
+  <script type="module" src="app.js?v=35"></script>
 </body>
 </html>

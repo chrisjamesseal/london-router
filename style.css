@@ -147,6 +147,9 @@ body {
   display: inline-block; font-weight: 800; font-size: 14px; color: #7a5b00; text-decoration: none;
 }
 .pub-name:active { opacity: .7; }
+.pub-beers { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.pub-beers li { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink); background: var(--bg); border-radius: 8px; padding: 4px 8px; }
+.beer-logo { width: 16px; height: 16px; border-radius: 4px; flex: 0 0 auto; }
 
 /* bottom search bar — placed within thumb's reach */
 .bar {
@@ -216,6 +219,7 @@ body.has-results .field input { padding: 11px 4px; }
 /* Custom tab panel */
 .custom { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .custom-hint { margin: 8px 2px 2px; font-size: 12.5px; color: var(--muted); }
+.custom-intro { margin: 2px 2px 12px; font-size: 13px; line-height: 1.5; color: var(--ink); background: #eef4ff; border: 1px solid #dbe6ff; border-radius: 11px; padding: 10px 12px; }
 .tab-new { color: #ff5a1f; font-weight: 800; }
 .ex-note { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
 .seg.full { flex-wrap: wrap; }
