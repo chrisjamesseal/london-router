@@ -2,8 +2,9 @@
 // TfL and Nominatim directly (both allow CORS). No backend required.
 import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
-import { railcardPence, bikePricing, zoneForStation, isPeakDate, setBikeOp } from "./lib/fares.js";
+import { bikePricing, zoneForStation, isPeakDate, setBikeOp } from "./lib/fares.js";
 import { arrivals, lineStatus } from "./lib/tfl.js";
+import { trainFare, faresEndpoint } from "./lib/trainfares.js";
 
 // --- Live countdown / disruption polling state -----------------------------
 let detailTimers = []; // intervals to clear when leaving the route page
@@ -60,12 +61,12 @@ let layers = L.layerGroup().addTo(map);
 let lastResult = null;
 let sortBy = "fastest"; // "fastest" | "cheapest"
 
-// "Train" = anything you'd buy a National Rail ticket for on Trainline and that a
-// railcard discounts: National Rail, Overground, Elizabeth line, Thameslink.
+// "Train" = anything you'd buy a National Rail ticket for on Trainline:
+// National Rail, Overground, Elizabeth line, Thameslink.
 // (Tube/DLR/tram are Oyster-only, so they stay separate.)
 const TRAIN_MODES = ["national-rail", "train", "overground", "elizabeth-line", "thameslink"];
 const hasTrain = (legs) => legs.some((l) => TRAIN_MODES.includes(l.mode));
-// A railcard only applies to genuine National Rail (not tube/Overground/Elizabeth).
+// Genuine National Rail (fares aren't fetchable → flag with "*" + Trainline).
 const NATIONAL_RAIL_MODES = ["national-rail", "train"];
 const hasNationalRail = (legs) => legs.some((l) => NATIONAL_RAIL_MODES.includes(l.mode));
 // Where you'd board (and so stop for a pint just before).
@@ -314,6 +315,20 @@ function wireProviderSeg(id, key, onChange) {
 }
 wireProviderSeg("#mapsSeg", "maps");
 wireProviderSeg("#bikeSeg", "bike", () => setBikeOp(PREFS.bike)); // affects pricing → re-plan on Update
+
+// Real-train-fare proxy URL: persisted to the key lib/trainfares.js reads.
+const FARES_EP_KEY = "quickest.faresEndpoint";
+(function wireFaresEndpoint() {
+  const el = $("#faresEp");
+  if (!el) return;
+  try { el.value = localStorage.getItem(FARES_EP_KEY) || ""; } catch {}
+  const save = () => {
+    const v = el.value.trim();
+    try { v ? localStorage.setItem(FARES_EP_KEY, v) : localStorage.removeItem(FARES_EP_KEY); } catch {}
+  };
+  el.addEventListener("change", save);
+  el.addEventListener("blur", save);
+})();
 
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
@@ -597,6 +612,8 @@ function cleanPlatform(s) {
 }
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // Compass direction a rail leg travels, from the leg's start/end coords
 // ("Eastbound", "Westbound", "Northbound", "Southbound") — like the platforms.
@@ -696,11 +713,6 @@ function setTab(sort) {
   }
 }
 
-function readDiscounts() {
-  const on = new Set([...document.querySelectorAll("#discounts input:checked")].map((i) => i.closest("label").dataset.disc));
-  return { railcard: on.has("railcard") };
-}
-
 // Estimate a cab leg's fare from its straight-line distance (mirrors the engine's
 // cabHop model) so cab-to-station routes split correctly into cab + transit.
 function cabHopPence(leg) {
@@ -713,8 +725,7 @@ function cabHopPence(leg) {
   return Math.round(250 + 150 * km + 25 * driveMin);
 }
 
-// Split a route's cost into its parts so a railcard only discounts the *train*
-// fare (not the bike hire, cab, tube or bus). Returns pence amounts.
+// Split a route's cost into its component parts. Returns pence amounts.
 function fareParts(o) {
   const isCab = !!o.brand || o.legs.some((l) => l.mode === "car");
   const bike = o.legs.find((l) => l.mode === "cycle");
@@ -728,28 +739,19 @@ function fareParts(o) {
   return { isCab, bikePart, carPart, transit, busPart, railPart };
 }
 
-// What a route actually costs to show, after discounts. Returns {pence, prefix, railHint}.
+// What a route costs to show. Returns {pence, prefix, trainEst}.
 function priceOf(o) {
-  const d = readDiscounts();
   const parts = fareParts(o);
   // National Rail fares aren't zonal and TfL doesn't return them, so we can't
   // show a reliable price — flag those with "*" and point to Trainline.
   const trainEst = hasNationalRail(o.legs) && !o.synthetic;
-  let pence = o.costPence;
-  let railHint = "";
-  // Railcard: 1/3 off the train fare only, and only when toggled on. No text
-  // unless there's a genuine National Rail train in the route.
-  if (trainEst && d.railcard) {
-    pence -= parts.railPart - railcardPence(parts.railPart);
-    railHint = `<small class="rail">railcard ✓</small>`;
-  }
-  return { pence, prefix: parts.isCab ? "&lt;" : "", railHint, trainEst };
+  return { pence: o.costPence, prefix: parts.isCab ? "&lt;" : "", trainEst };
 }
 
 // Time/price block reused by the list cards and the single-route page.
 function summaryHTML(o) {
   const timeBlock = `<div class="time">${fmtMin(o.durationMin)}</div>`;
-  const { pence, prefix, railHint, trainEst } = priceOf(o);
+  const { pence, prefix, trainEst } = priceOf(o);
   const star = trainEst ? "*" : ""; // "*" = includes a train fare we can't fetch
   // Show "pp" (per person) whenever there's more than one traveller. Cabs split
   // the fare — per-person big, total underneath; transit fares are already pp.
@@ -772,7 +774,7 @@ function summaryHTML(o) {
   return `
     <div class="top">
       <div class="timewrap">${timeBlock}</div>
-      <div class="price">${priceMain}${priceSub ? `<small>${priceSub}</small>` : ""}${railHint}</div>
+      <div class="price">${priceMain}${priceSub ? `<small>${priceSub}</small>` : ""}</div>
     </div>
     <div class="legs">${legs}</div>`;
 }
@@ -1019,10 +1021,18 @@ function legFares(o, legs) {
 }
 
 // A4: cost breakdown per leg and per traveller, with capping caveat.
-function costPanel(o, legs) {
+// `real` (optional) is a fetched National Rail fare from the BR Fares proxy —
+// when present it replaces the rail estimate and drops the "*".
+function costPanel(o, legs, real) {
   const parts = fareParts(o);
-  const { pence, prefix, trainEst } = priceOf(o);
+  const base = priceOf(o);
+  const prefix = base.prefix;
+  const hasReal = !!(real && real.fromPence > 0);
+  const trainEst = base.trainEst && !hasReal;
   const star = trainEst ? "*" : "";
+  // Swap the zone estimate for the real train fare (and adjust the total).
+  const railDisplayPence = hasReal ? real.fromPence : parts.railPart;
+  const pence = hasReal ? Math.max(0, o.costPence - parts.railPart + real.fromPence) : base.pence;
   // Zone label for the tube/rail portion (one PAYG fare covers all the rail legs).
   const railLegs = legs.filter((l) => RAIL_MODES.includes(l.mode));
   let zoneStr = "";
@@ -1037,10 +1047,11 @@ function costPanel(o, legs) {
   const rows = [];
   if (legs.some((l) => l.mode === "cycle"))
     rows.push([bikeApp().emoji, `${bikeApp().name} Bike`, money(parts.bikePart)]);
-  if (parts.railPart > 0) {
-    // Railcard (when on, train route) takes 1/3 off the train fare shown here.
-    const railVal = (trainEst && readDiscounts().railcard) ? railcardPence(parts.railPart) : parts.railPart;
-    rows.push(["🚆", `${trainEst ? "Train" : "Tube / Rail"}${zoneStr && !trainEst ? ` <span class="muted">· ${zoneStr}</span>` : ""}`, money(railVal) + star]);
+  if (parts.railPart > 0 || hasReal) {
+    const railLabel = hasReal
+      ? `Train${real.ticketName ? ` <span class="muted">· ${esc(real.ticketName)}</span>` : ""}`
+      : `${trainEst ? "Train" : "Tube / Rail"}${zoneStr && !trainEst ? ` <span class="muted">· ${zoneStr}</span>` : ""}`;
+    rows.push(["🚆", railLabel, money(railDisplayPence) + star]);
   }
   if (parts.busPart > 0) rows.push(["🚌", "Bus", money(parts.busPart)]);
   if (parts.carPart > 0)
@@ -1051,38 +1062,23 @@ function costPanel(o, legs) {
   const total = parts.isCab ? pence : pence * peopleCount; // whole party
   const perRow = peopleCount > 1
     ? `<div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}${star}</span></div>` : "";
-  // Train fares can't be fetched — asterisk note + Trainline link for that section.
+  // Train fares: show the real BR Fares single when we have one, else flag the
+  // estimate with "*" and point to Trainline for the exact price.
   const trainLeg = legs.find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
-  const trainNote = trainEst
-    ? `<div class="cost-note">* We can't fetch live train fares. <a href="${trainLeg ? trainTicketLink(trainLeg) : "https://www.thetrainline.com/"}" target="_blank" rel="noopener">Find the exact price on Trainline →</a></div>`
+  const trainlineUrl = trainLeg ? trainTicketLink(trainLeg) : "https://www.thetrainline.com/";
+  const trainNote = hasReal
+    ? `<div class="cost-note">🚆 Real National Rail fare — cheapest standard-class single${real.ticketName ? ` (${esc(real.ticketName)})` : ""}. <a href="${trainlineUrl}" target="_blank" rel="noopener">Compare on Trainline →</a></div>`
+    : trainEst
+    ? `<div class="cost-note">* We can't fetch live train fares. <a href="${trainlineUrl}" target="_blank" rel="noopener">Find the exact price on Trainline →</a></div>`
     : "";
-  const railNote = trainEst && readDiscounts().railcard
-    ? `<div class="cost-note">⅓ railcard discount applied to the train fare.</div>` : "";
   const capNote = `<div class="cost-note">Single-fare estimate. TfL daily capping may make your real spend lower; cab fares are estimates and excluded from capping.</div>`;
   return `<details class="cost-panel" open>
     <summary>Cost breakdown</summary>
     <div class="cost-rows">${rowsHtml}</div>
     ${perRow}
     <div class="cost-tot big"><span>Total</span><span>${prefix}${money(total)}${star}</span></div>
-    ${bikeWorkings(legs)}${bikeReturnAlert(legs)}${trainNote}${railNote}${capNote}
+    ${bikeReturnAlert(legs)}${trainNote}${capNote}
   </details>`;
-}
-
-// Bike fare workings: pay-as-you-go vs a time pass.
-function bikeWorkings(legs) {
-  const bike = legs.find((l) => l.mode === "cycle");
-  if (!bike) return "";
-  const b = bikePricing(Math.round(bike.durationMin));
-  const li = [];
-  const unlock = b.unlockPence > 0 ? `${money(b.unlockPence)} unlock + ` : "no unlock, ";
-  li.push(`Pay-as-you-go: ${unlock}${b.perMinPence}p/min × ${b.min} min = <b>${money(b.paygPence)}</b>`);
-  if (b.hasPass) {
-    li.push(`${b.passMins}-min pass${b.passesNeeded > 1 ? ` × ${b.passesNeeded}` : ""}: <b>${money(b.passPence)}</b>`);
-    li.push(b.pass
-      ? `✓ The pass wins — you save ${money(b.paygPence - b.passPence)} on this ride.`
-      : `✓ Pay-as-you-go is cheaper for a ride this short.`);
-  }
-  return `<details class="cost-sub"><summary>${bikeApp().emoji} How the ${b.op} fare works</summary><ul>${li.map((x) => `<li>${x}</li>`).join("")}</ul></details>`;
 }
 
 // Lime return-trip tip — its own lime-green alert, below the bike calculation.
@@ -1148,7 +1144,27 @@ function openDetail(o) {
     try { startCountdown(legs, firstTransitIdx); } catch (e) { console.warn("countdown:", e); }
     try { loadDisruptions(legs); } catch (e) { console.warn("disruptions:", e); }
     try { loadBusFrequencies(legs, clockTimes(o).dep); } catch (e) { console.warn("bus freq:", e); }
+    try { loadRealTrainFare(o, legs); } catch (e) { console.warn("train fare:", e); }
   }
+}
+
+// If a fare proxy is configured, fetch the real National Rail single and swap it
+// in for the zone estimate — updating the cost panel and headline price in place.
+// No-op (and silently falls back to the "*" estimate) when nothing is configured.
+function loadRealTrainFare(o, legs) {
+  if (o.synthetic || !faresEndpoint() || !hasNationalRail(legs)) return;
+  const tleg = legs.find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
+  if (!tleg || !tleg.from || !tleg.to) return;
+  trainFare(tleg.from, tleg.to).then((f) => {
+    if (!f || !(f.fromPence > 0) || lastDetailOption !== o) return;
+    const panel = $("#detailContent .cost-panel");
+    if (panel) panel.outerHTML = costPanel(o, legs, f);
+    const costEl = $("#detailContent .itin-cost");
+    if (costEl) {
+      const p = Math.max(0, o.costPence - fareParts(o).railPart + f.fromPence);
+      costEl.innerHTML = `${money(p)}${peopleCount > 1 && p > 0 ? " <small>pp</small>" : ""}`;
+    }
+  }).catch(() => {});
 }
 
 // --- A2 live countdown -----------------------------------------------------
@@ -1400,7 +1416,6 @@ function resetApp() {
   $("#pubChk").checked = false;
   $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
   updateAvoidPreviews();
-  $("#discounts").querySelectorAll("input").forEach((i) => (i.checked = false));
   peopleCount = 1;
   $("#peopleSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.n === "1"));
   whenMode = "now";
@@ -1415,9 +1430,13 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.40", [
+    "Removed the railcard option.",
+    "New: real National Rail fares. Add the free fare proxy in Custom → Real train fares and journeys with a train leg show the actual cheapest single (no more “*” estimate).",
+    "Tidied the bike cost section — dropped the repetitive “How the Lime fare works” dropdown, keeping just the round-trip pass tip.",
+  ]],
   ["0.39", [
     "Routes with a National Rail train now mark the price with a “*” and link you straight to Trainline for that route (live train fares can't be fetched).",
-    "Railcard now only discounts the train fare (never tube), only when you toggle it on, and the railcard text is hidden unless a real train is in the route.",
   ]],
   ["0.38", [
     "Best option is back at the top of the results list.",
@@ -1431,7 +1450,7 @@ const CHANGELOG = [
     "Each leg now has an “open app” icon on the right — bus/tube to your maps app, the bike leg to Lime/Forest, trains to Trainline/TrainPal (for that exact section), cabs to Uber/Bolt.",
     "Custom filters: switch your maps app (Google / Citymapper / Apple), bike (Lime / Forest) and train tickets (Trainline / TrainPal).",
     "Best result now sits at the bottom of the list, nearest the search bar.",
-    "Railcard only shows when a normal National Rail train is involved (never for tube/Overground).",
+    "Trains show where they terminate; tubes show the bound.",
     "Tidied labels: trains show where they terminate, tubes show the bound, bus shows “Every ~N min”, no “Free” clutter on walks.",
   ]],
   ["0.35", [
@@ -1466,12 +1485,12 @@ const CHANGELOG = [
   ]],
   ["0.29", [
     "The whole train journey now collapses into one section with a single Trainline link — even when you change trains.",
-    "Overground, Elizabeth line and Thameslink now count as trains, so their fare shows and a railcard applies.",
+    "Overground, Elizabeth line and Thameslink now count as trains, so their fare shows correctly.",
   ]],
   ["0.28", [
     "Prices show “pp” (per person) when you're travelling as a group.",
     "Pub stop is now a simple on/off — drops in the nearest pub within a 15-min walk.",
-    "Railcard now only discounts the train portion of a fare, and train prices add up correctly.",
+    "Train prices add up correctly.",
     "Tidied the splash screen and removed the Uber One option.",
   ]],
   ["0.27", [
@@ -1483,8 +1502,8 @@ const CHANGELOG = [
   ]],
   ["0.26", [
     "Pub stops now find pubs serving Jubel or Guinness within a 15-min walk, shown on the map, with a link to the brand's pub finder.",
-    "Custom tab tidied: section titles, Travellers 1–6, a Discounts section (Railcard, Uber One), and Avoid chips that turn into a red ✕.",
-    "Smarter prices: railcard saving on trains, an upper “<” estimate for cabs, and an AI breakdown of how each fare was worked out.",
+    "Custom tab tidied: section titles, Travellers 1–6, and Avoid chips that turn into a red ✕.",
+    "Smarter prices: an upper “<” estimate for cabs, and an AI breakdown of how each fare was worked out.",
     "Times now show as hours and minutes over an hour.",
     "Route page: trains link to Trainline, other legs to Google Maps; clearer terminus labels; Start row removed and the final leg reads “Walk to …”.",
     "Open Uber/Bolt/Lime straight from a card with a ↗.",

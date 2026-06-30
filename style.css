@@ -189,6 +189,8 @@ body {
 .seg.full { width: 100%; }
 .seg.full button { flex: 1; height: 34px; }
 .when-time { border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 11px; font-family: inherit; font-size: 15px; color: var(--ink); }
+.when-time.full { width: 100%; box-sizing: border-box; }
+.ex-beta { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); border: 1.5px solid var(--brand); border-radius: 6px; padding: 1px 5px; vertical-align: 1px; }
 .avoid { display: flex; flex-wrap: wrap; gap: 8px; }
 .avoid label { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 9px; cursor: pointer; }
 .avoid input { width: 16px; height: 16px; accent-color: var(--brand); }
@@ -223,11 +225,10 @@ body.has-results .field input { padding: 11px 4px; }
 .tab-new { color: var(--brand); font-weight: 800; }
 .ex-note { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
 .seg.full { flex-wrap: wrap; }
-/* avoid / discounts chips — hide raw box, style selected */
+/* avoid chips — hide raw box, style selected */
 .avoid input { position: absolute; opacity: 0; width: 0; height: 0; }
 #avoid label:has(input:checked) { background: #ffe6e1; border-color: #e0533d; color: #c0392b; }
 #avoid label:has(input:checked)::before { content: "✕ "; font-weight: 800; }
-#discounts label:has(input:checked),
 #pubStop label:has(input:checked) { background: #e7f0fd; border-color: var(--brand); color: var(--brand); }
 
 /* card spacing: tighter top, more room under the time */
@@ -437,10 +438,6 @@ body.has-results .splash { display: none; }
 .cost-note { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 8px; }
 .cost-note a, .train-note a { color: var(--brand); font-weight: 700; text-decoration: none; }
 .train-note { color: var(--ink); }
-.cost-sub { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
-.cost-sub summary { font-weight: 700; font-size: 13px; cursor: pointer; color: var(--accent-dark); }
-.cost-sub ul { margin: 8px 0 0; padding-left: 18px; }
-.cost-sub li { font-size: 12.5px; line-height: 1.5; margin-bottom: 4px; }
 .lime-alert { margin-top: 10px; background: #e4f7d6; border: 1px solid #95d36a; border-radius: 11px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; color: #2f5d18; }
 
 /* D3 — disruption banners */
