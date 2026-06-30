@@ -1152,8 +1152,11 @@ function openDetail(o) {
 // in for the zone estimate — updating the cost panel and headline price in place.
 // No-op (and silently falls back to the "*" estimate) when nothing is configured.
 function loadRealTrainFare(o, legs) {
-  if (o.synthetic || !faresEndpoint() || !hasNationalRail(legs)) return;
-  const tleg = legs.find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
+  if (o.synthetic || !faresEndpoint() || !hasNationalRail(o.legs)) return;
+  // Use a fresh merge of the raw legs for the station names — the display `legs`
+  // have their first/last endpoints overwritten with the typed origin/dest.
+  const tleg = mergeTrainLegs(o.legs.map((l) => ({ ...l })))
+    .find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
   if (!tleg || !tleg.from || !tleg.to) return;
   trainFare(tleg.from, tleg.to).then((f) => {
     if (!f || !(f.fromPence > 0) || lastDetailOption !== o) return;
@@ -1430,6 +1433,9 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.41", [
+    "Fixed real train-fare lookups for journeys that start or end right at a National Rail station.",
+  ]],
   ["0.40", [
     "Removed the railcard option.",
     "New: real National Rail fares. Add the free fare proxy in Custom → Real train fares and journeys with a train leg show the actual cheapest single (no more “*” estimate).",
