@@ -124,8 +124,8 @@ setBikeOp(PREFS.bike);
 
 const MAPS_APPS = {
   google: { name: "Google Maps", icon: "google.com/maps" },
-  citymapper: { name: "Citymapper", icon: "citymapper.com" },
 };
+const mapsApp = () => MAPS_APPS[PREFS.maps] || MAPS_APPS.google;
 const BIKE_APPS = {
   // Lime app universal link (opens the app if installed, else the store).
   lime: { name: "Lime", icon: "li.me", link: "https://limebike.app.link/", emoji: "🍋‍🟩" },
@@ -312,7 +312,6 @@ function wireProviderSeg(id, key, onChange) {
     };
   });
 }
-wireProviderSeg("#mapsSeg", "maps");
 wireProviderSeg("#bikeSeg", "bike", () => setBikeOp(PREFS.bike)); // affects pricing → re-plan on Update
 
 const avoidedModes = () =>
@@ -572,21 +571,31 @@ function pointQuery(pt, name) {
   if (pt && pt.lat != null) return `${pt.lat},${pt.lon}`;
   return null;
 }
-function mapsLink(leg) {
-  const a = leg.fromLL, b = leg.toLL;
+// A Google Maps directions link. `bounds` (optional) overrides the leg's own
+// start/end so a transit leg can span its whole run (see transitRunBounds),
+// giving one route across a change rather than stopping at the interchange.
+function mapsLink(leg, bounds) {
   const mode = mapsMode(leg.mode);
-  if (PREFS.maps === "citymapper") {
-    if (a && b && a.lat != null && b.lat != null)
-      return `https://citymapper.com/directions?startcoord=${a.lat}%2C${a.lon}&endcoord=${b.lat}%2C${b.lon}`;
-    return "https://citymapper.com/";
-  }
-  // Google Maps (default)
-  const dest = pointQuery(leg.toLL, leg.to);
+  const fromName = bounds?.from ?? leg.from, fromLL = bounds?.fromLL ?? leg.fromLL;
+  const toName = bounds?.to ?? leg.to, toLL = bounds?.toLL ?? leg.toLL;
+  const dest = pointQuery(toLL, toName);
   if (!dest) return null;
-  const origin = pointQuery(leg.fromLL, leg.from);
+  const origin = pointQuery(fromLL, fromName);
   let u = `https://www.google.com/maps/dir/?api=1&travelmode=${mode}&destination=${dest}`;
   if (origin) u += `&origin=${origin}`;
   return u;
+}
+
+// The start/end stations of the maximal run of consecutive transit legs that
+// `idx` belongs to, bridging the short interchange walks between them. Lets a
+// tube→(change)→tube journey open in Maps as one route origin → final station.
+function transitRunBounds(legs, idx) {
+  let i = idx, j = idx;
+  const priorTransit = (p) => { while (p >= 0 && legs[p].mode === "walking") p--; return p >= 0 && TRANSIT_LEG(legs[p]) ? p : -1; };
+  const nextTransit = (p) => { while (p < legs.length && legs[p].mode === "walking") p++; return p < legs.length && TRANSIT_LEG(legs[p]) ? p : -1; };
+  for (let p = priorTransit(i - 1); p >= 0; p = priorTransit(i - 1)) i = p;
+  for (let p = nextTransit(j + 1); p >= 0; p = nextTransit(j + 1)) j = p;
+  return { from: legs[i].from, fromLL: legs[i].fromLL, to: legs[j].to, toLL: legs[j].toLL };
 }
 
 // Platform / direction you'd board at, tidied (no "Station" wording).
@@ -611,7 +620,7 @@ function compassBound(leg) {
 function legChip(leg) {
   const n = Math.round(leg.durationMin);
   if (leg.mode === "cycle")
-    return `<span class="leg cycle"><span class="ic">🍋‍🟩</span>${fmtMin(n)} Bike</span>`;
+    return `<span class="leg cycle"><span class="ic">${bikeApp().emoji}</span>${fmtMin(n)} Bike</span>`;
   if (leg.mode === "walking")
     return `<span class="leg walking"><span class="ic">🚶</span>${leg.km ? `${leg.km} km Walk` : `${fmtMin(n)} Walk`}</span>`;
   if (leg.mode === "car") {
@@ -865,7 +874,7 @@ function mergeTrainLegs(legs) {
 const TRANSIT_LEG = (l) => RAIL_MODES.includes(l.mode) || l.mode === "bus";
 function legIcon(leg) {
   if (leg.mode === "walking") return "🚶";
-  if (leg.mode === "cycle") return "🍋‍🟩";
+  if (leg.mode === "cycle") return bikeApp().emoji;
   if (leg.mode === "car") return "🚗";
   if (leg.mode === "bus") return "🚌";
   if (leg.mode === "dlr") return "🚈";
@@ -903,14 +912,20 @@ function modeSummary(legs) {
 
 // One leg of the itinerary, with line-colour accent, board/alight, walk time,
 // the leg's fare, a live-countdown / bus-frequency slot, and expandable stops.
-function legCard(leg, idx, firstTransitIdx, fare, note) {
+function legCard(leg, idx, firstTransitIdx, fare, note, legs) {
   const n = Math.round(leg.durationMin);
   const isTransit = TRANSIT_LEG(leg);
   const color = isTransit ? lineColor(leg) : "#9aa7b2";
   let title, sub = "";
   if (leg.mode === "walking") {
-    title = leg.toDest ? `Walk to ${cleanName(leg.to).split(",")[0]}` : `Walk · ${fmtMin(n)}`;
-    sub = leg.toDest ? "" : leg.to ? `to ${cleanName(leg.to).split(",")[0]}` : "";
+    // Always say where the walk goes: the leg's own arrival, else the next
+    // leg's boarding point, else the leg's own instruction summary.
+    const next = legs && legs[idx + 1];
+    let toName = leg.to ? cleanName(leg.to).split(",")[0] : "";
+    if (!toName && next && next.from && next.mode !== "cycle") toName = cleanName(next.from).split(",")[0];
+    if (!toName && leg.summary) { const s = leg.summary.replace(/^walk\s+(to\s+)?/i, "").trim(); if (s) toName = s; }
+    title = leg.toDest ? `Walk to ${toName || "your destination"}` : `Walk · ${fmtMin(n)}`;
+    sub = leg.toDest ? "" : (toName ? `to ${toName}` : "");
   } else if (leg.mode === "cycle") {
     title = `${bikeApp().name} Bike · ${fmtMin(n)}`;
     sub = leg.to ? `to ${cleanName(leg.to)}` : "";
@@ -942,7 +957,7 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
     : legIcon(leg);
   const iconBg = appLogo ? "#fff" : color;
   // Right-side action: open the relevant app (maps / bike / cab / train tickets).
-  const act = legAction(leg);
+  const act = legAction(leg, legs, idx);
   const linkHtml = act
     ? `<a class="legc-link" href="${act.url}" target="_blank" rel="noopener" aria-label="Open ${act.label}"><img class="legc-link-img" src="${favicon(act.icon)}" alt="" onerror="this.replaceWith(document.createTextNode('${act.fallback}'))"></a>`
     : "";
@@ -960,7 +975,7 @@ function legCard(leg, idx, firstTransitIdx, fare, note) {
 
 // Where a leg's right-side icon should link: the chosen maps app, the bike app,
 // the ride app, or the chosen train-ticket site — opening that exact section.
-function legAction(leg) {
+function legAction(leg, legs, idx) {
   if (leg.mode === "cycle") return { url: bikeApp().link, icon: bikeApp().icon, fallback: bikeApp().emoji, label: bikeApp().name };
   if (leg.mode === "car") {
     const brand = leg.brand || "uber";
@@ -969,9 +984,12 @@ function legAction(leg) {
   if (TRAIN_MODES.includes(leg.mode)) {
     return { url: trainTicketLink(leg), icon: TRAIN_APPS[PREFS.trains].icon, fallback: "🎫", label: TRAIN_APPS[PREFS.trains].name };
   }
-  const u = mapsLink(leg);
+  // Transit legs open Maps as one route across the whole run (tube → change →
+  // tube), not just to the interchange; walks stay point-to-point.
+  const bounds = legs && TRANSIT_LEG(leg) ? transitRunBounds(legs, idx) : null;
+  const u = mapsLink(leg, bounds);
   if (!u) return null;
-  return { url: u, icon: MAPS_APPS[PREFS.maps].icon, fallback: "🗺️", label: MAPS_APPS[PREFS.maps].name };
+  return { url: u, icon: mapsApp().icon, fallback: "🗺️", label: mapsApp().name };
 }
 
 // Per-leg fare strings + the zone note for the (first) rail leg. Mirrors the
@@ -1076,7 +1094,7 @@ function openDetail(o) {
 
   const firstTransitIdx = legs.findIndex(TRANSIT_LEG);
   const fares = legFares(o, legs);
-  const cards = legs.map((leg, i) => legCard(leg, i, firstTransitIdx, fares[i].fare, fares[i].note));
+  const cards = legs.map((leg, i) => legCard(leg, i, firstTransitIdx, fares[i].fare, fares[i].note, legs));
   if (pubOn) {
     let idx = legs.findIndex((l) => BOARD_MODES.includes(l.mode));
     if (idx < 0) idx = cards.length;
@@ -1301,6 +1319,12 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
+  ["0.43", [
+    "The bike icon on the route page and map now matches your chosen operator — Forest shows 🌳, Lime shows its own mark.",
+    "Every walk step now says where you're heading (e.g. “to Earl's Court”).",
+    "Google Maps now opens a whole tube journey as one route across changes, instead of stopping at the station you switch at.",
+    "Removed Citymapper — routes open in Google Maps.",
+  ]],
   ["0.42", [
     "New route type: take transit most of the way, then an e-bike for the last mile from a station near your destination (e.g. tube to Earl's Court, then a Lime to the hospital).",
     "Removed the experimental real-train-fares setting and the Avoid-toggle time/cost preview.",
@@ -1322,7 +1346,7 @@ const CHANGELOG = [
   ]],
   ["0.36", [
     "Each leg now has an “open app” icon on the right — bus/tube to your maps app, the bike leg to Lime/Forest, trains to Trainline/TrainPal (for that exact section), cabs to Uber/Bolt.",
-    "Custom filters: switch your maps app (Google / Citymapper / Apple), bike (Lime / Forest) and train tickets (Trainline / TrainPal).",
+    "Custom filters: switch your bike (Lime / Forest) and train tickets.",
     "Best result now sits at the bottom of the list, nearest the search bar.",
     "Trains show where they terminate; tubes show the bound.",
     "Tidied labels: trains show where they terminate, tubes show the bound, bus shows “Every ~N min”, no “Free” clutter on walks.",
@@ -1469,7 +1493,7 @@ function drawRoute(data, o) {
     emojiMarker(O.lat, O.lon, "📍", "You are here").addTo(layers);
   else dotMarker(O.lat, O.lon, "#00b894", "Start").addTo(layers);
   if (o.pickupBay) {
-    emojiMarker(o.pickupBay.lat, o.pickupBay.lon, "🍋‍🟩", "Grab e-bike").addTo(layers);
+    emojiMarker(o.pickupBay.lat, o.pickupBay.lon, bikeApp().emoji, "Grab e-bike").addTo(layers);
     pts.push([o.pickupBay.lat, o.pickupBay.lon]);
   }
   if (o.dropoffBay) {
