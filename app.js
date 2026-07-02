@@ -4,7 +4,6 @@ import { plan as runPlan } from "./lib/engine.js";
 import { geocode, suggest } from "./lib/geocode.js";
 import { bikePricing, zoneForStation, isPeakDate, setBikeOp } from "./lib/fares.js";
 import { arrivals, lineStatus } from "./lib/tfl.js";
-import { trainFare, faresEndpoint } from "./lib/trainfares.js";
 
 // --- Live countdown / disruption polling state -----------------------------
 let detailTimers = []; // intervals to clear when leaving the route page
@@ -316,20 +315,6 @@ function wireProviderSeg(id, key, onChange) {
 wireProviderSeg("#mapsSeg", "maps");
 wireProviderSeg("#bikeSeg", "bike", () => setBikeOp(PREFS.bike)); // affects pricing → re-plan on Update
 
-// Real-train-fare proxy URL: persisted to the key lib/trainfares.js reads.
-const FARES_EP_KEY = "quickest.faresEndpoint";
-(function wireFaresEndpoint() {
-  const el = $("#faresEp");
-  if (!el) return;
-  try { el.value = localStorage.getItem(FARES_EP_KEY) || ""; } catch {}
-  const save = () => {
-    const v = el.value.trim();
-    try { v ? localStorage.setItem(FARES_EP_KEY, v) : localStorage.removeItem(FARES_EP_KEY); } catch {}
-  };
-  el.addEventListener("change", save);
-  el.addEventListener("blur", save);
-})();
-
 const avoidedModes = () =>
   new Set([...$("#avoid").querySelectorAll("input:checked")].map((i) => i.dataset.mode));
 
@@ -612,8 +597,6 @@ function cleanPlatform(s) {
 }
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // Compass direction a rail leg travels, from the leg's start/end coords
 // ("Eastbound", "Westbound", "Northbound", "Southbound") — like the platforms.
@@ -680,7 +663,7 @@ function render(data) {
       title: "No route with these filters",
       body: "Your Avoid / Accessibility filters ruled everything out. Try relaxing them.",
       actions: [
-        avoids.length ? { label: "Clear avoids", onClick: () => { avoids.forEach((i) => (i.checked = false)); updateAvoidPreviews(); plan(); } } : null,
+        avoids.length ? { label: "Clear avoids", onClick: () => { avoids.forEach((i) => (i.checked = false)); plan(); } } : null,
         { label: "Allow cabs", onClick: () => { const c = $('#avoid input[data-mode="cab"]'); if (c) c.checked = false; plan(); } },
       ].filter(Boolean),
     });
@@ -1021,18 +1004,10 @@ function legFares(o, legs) {
 }
 
 // A4: cost breakdown per leg and per traveller, with capping caveat.
-// `real` (optional) is a fetched National Rail fare from the BR Fares proxy —
-// when present it replaces the rail estimate and drops the "*".
-function costPanel(o, legs, real) {
+function costPanel(o, legs) {
   const parts = fareParts(o);
-  const base = priceOf(o);
-  const prefix = base.prefix;
-  const hasReal = !!(real && real.fromPence > 0);
-  const trainEst = base.trainEst && !hasReal;
+  const { pence, prefix, trainEst } = priceOf(o);
   const star = trainEst ? "*" : "";
-  // Swap the zone estimate for the real train fare (and adjust the total).
-  const railDisplayPence = hasReal ? real.fromPence : parts.railPart;
-  const pence = hasReal ? Math.max(0, o.costPence - parts.railPart + real.fromPence) : base.pence;
   // Zone label for the tube/rail portion (one PAYG fare covers all the rail legs).
   const railLegs = legs.filter((l) => RAIL_MODES.includes(l.mode));
   let zoneStr = "";
@@ -1047,12 +1022,8 @@ function costPanel(o, legs, real) {
   const rows = [];
   if (legs.some((l) => l.mode === "cycle"))
     rows.push([bikeApp().emoji, `${bikeApp().name} Bike`, money(parts.bikePart)]);
-  if (parts.railPart > 0 || hasReal) {
-    const railLabel = hasReal
-      ? `Train${real.ticketName ? ` <span class="muted">· ${esc(real.ticketName)}</span>` : ""}`
-      : `${trainEst ? "Train" : "Tube / Rail"}${zoneStr && !trainEst ? ` <span class="muted">· ${zoneStr}</span>` : ""}`;
-    rows.push(["🚆", railLabel, money(railDisplayPence) + star]);
-  }
+  if (parts.railPart > 0)
+    rows.push(["🚆", `${trainEst ? "Train" : "Tube / Rail"}${zoneStr && !trainEst ? ` <span class="muted">· ${zoneStr}</span>` : ""}`, money(parts.railPart) + star]);
   if (parts.busPart > 0) rows.push(["🚌", "Bus", money(parts.busPart)]);
   if (parts.carPart > 0)
     rows.push(["🚗", cap(o.brand || "Cab"), `${money(Math.round(parts.carPart * 0.85))}–${money(parts.carPart)} est.`]);
@@ -1062,14 +1033,10 @@ function costPanel(o, legs, real) {
   const total = parts.isCab ? pence : pence * peopleCount; // whole party
   const perRow = peopleCount > 1
     ? `<div class="cost-tot"><span>Per traveller</span><span>${prefix}${money(perTraveller)}${star}</span></div>` : "";
-  // Train fares: show the real BR Fares single when we have one, else flag the
-  // estimate with "*" and point to Trainline for the exact price.
+  // Train fares can't be fetched — asterisk note + Trainline link for that section.
   const trainLeg = legs.find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
-  const trainlineUrl = trainLeg ? trainTicketLink(trainLeg) : "https://www.thetrainline.com/";
-  const trainNote = hasReal
-    ? `<div class="cost-note">🚆 Real National Rail fare — cheapest standard-class single${real.ticketName ? ` (${esc(real.ticketName)})` : ""}. <a href="${trainlineUrl}" target="_blank" rel="noopener">Compare on Trainline →</a></div>`
-    : trainEst
-    ? `<div class="cost-note">* We can't fetch live train fares. <a href="${trainlineUrl}" target="_blank" rel="noopener">Find the exact price on Trainline →</a></div>`
+  const trainNote = trainEst
+    ? `<div class="cost-note">* We can't fetch live train fares. <a href="${trainLeg ? trainTicketLink(trainLeg) : "https://www.thetrainline.com/"}" target="_blank" rel="noopener">Find the exact price on Trainline →</a></div>`
     : "";
   const capNote = `<div class="cost-note">Single-fare estimate. TfL daily capping may make your real spend lower; cab fares are estimates and excluded from capping.</div>`;
   return `<details class="cost-panel" open>
@@ -1144,30 +1111,7 @@ function openDetail(o) {
     try { startCountdown(legs, firstTransitIdx); } catch (e) { console.warn("countdown:", e); }
     try { loadDisruptions(legs); } catch (e) { console.warn("disruptions:", e); }
     try { loadBusFrequencies(legs, clockTimes(o).dep); } catch (e) { console.warn("bus freq:", e); }
-    try { loadRealTrainFare(o, legs); } catch (e) { console.warn("train fare:", e); }
   }
-}
-
-// If a fare proxy is configured, fetch the real National Rail single and swap it
-// in for the zone estimate — updating the cost panel and headline price in place.
-// No-op (and silently falls back to the "*" estimate) when nothing is configured.
-function loadRealTrainFare(o, legs) {
-  if (o.synthetic || !faresEndpoint() || !hasNationalRail(o.legs)) return;
-  // Use a fresh merge of the raw legs for the station names — the display `legs`
-  // have their first/last endpoints overwritten with the typed origin/dest.
-  const tleg = mergeTrainLegs(o.legs.map((l) => ({ ...l })))
-    .find((l) => NATIONAL_RAIL_MODES.includes(l.mode));
-  if (!tleg || !tleg.from || !tleg.to) return;
-  trainFare(tleg.from, tleg.to).then((f) => {
-    if (!f || !(f.fromPence > 0) || lastDetailOption !== o) return;
-    const panel = $("#detailContent .cost-panel");
-    if (panel) panel.outerHTML = costPanel(o, legs, f);
-    const costEl = $("#detailContent .itin-cost");
-    if (costEl) {
-      const p = Math.max(0, o.costPence - fareParts(o).railPart + f.fromPence);
-      costEl.innerHTML = `${money(p)}${peopleCount > 1 && p > 0 ? " <small>pp</small>" : ""}`;
-    }
-  }).catch(() => {});
 }
 
 // --- A2 live countdown -----------------------------------------------------
@@ -1273,7 +1217,6 @@ function findAlternative(leg) {
   const modeToAvoid = TRAIN_MODES.includes(leg.mode) ? "train" : leg.mode;
   const cb = $(`#avoid input[data-mode="${modeToAvoid === "tube" ? "tube" : modeToAvoid}"]`);
   if (cb) cb.checked = true;
-  updateAvoidPreviews();
   closeDetail();
   plan();
 }
@@ -1284,80 +1227,6 @@ function closeDetail() {
   lastDetailOption = null;
   $("#detail").classList.add("hidden");
   document.body.classList.remove("detail-open");
-}
-
-// --- C1: live "Avoid" preview deltas ---------------------------------------
-// Shows "+12 min / +£0.80" next to each Avoid toggle before you commit.
-const previewCache = new Map();
-let previewToken = 0;
-let previewTimer = null;
-function baselineHeadline() {
-  if (!lastResult || !lastResult.options) return null;
-  const movers = [...lastResult.options];
-  if (!movers.length) return null;
-  const best = movers.reduce((a, b) => (a.durationMin <= b.durationMin ? a : b));
-  return { min: best.durationMin, pence: best.costPence };
-}
-function avoidComboKey(extraAvoid) {
-  const base = [...avoidedModes()];
-  if (extraAvoid) base.push(extraAvoid);
-  const o = lastResult || {};
-  return `${o.origin?.lat},${o.dest?.lat}|${[...new Set(base)].sort().join(",")}`;
-}
-async function previewFor(input) {
-  const base = baselineHeadline();
-  const badge = input.closest("label").querySelector(".avoid-delta");
-  if (!badge) return;
-  if (input.checked || !base) { badge.textContent = ""; return; } // only preview turning ON
-  const mode = input.dataset.mode;
-  const key = avoidComboKey(mode);
-  badge.innerHTML = '<span class="spin sm"></span>';
-  const apply = (h) => {
-    if (!h) return (badge.textContent = "");
-    if (h === "none") { badge.textContent = "No route"; badge.classList.add("bad"); return; }
-    const dMin = Math.round(h.min - base.min);
-    const dP = h.pence - base.pence;
-    const parts = [];
-    if (dMin) parts.push(`${dMin > 0 ? "+" : ""}${dMin} min`);
-    if (Math.abs(dP) >= 5) parts.push(`${dP > 0 ? "+" : "−"}${pounds(Math.abs(dP)).slice(1) ? "£" + (Math.abs(dP) / 100).toFixed(2) : ""}`);
-    badge.classList.remove("bad");
-    badge.textContent = parts.length ? parts.join(" · ") : "≈ same";
-  };
-  if (previewCache.has(key)) return apply(previewCache.get(key));
-  const myToken = ++previewToken;
-  try {
-    const [bays, stations] = await Promise.all([baysPromise, stationsPromise]);
-    // Candidate avoid set = current avoids + this toggle.
-    const avoid = new Set([...avoidedModes(), mode]);
-    const TRANSIT = ["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram", "bus", "walking"];
-    const trainGroup = ["national-rail", "overground", "elizabeth-line", "dlr", "tram"];
-    const transitModes = TRANSIT.filter((m) => {
-      if (m === "tube" && avoid.has("tube")) return false;
-      if (m === "bus" && avoid.has("bus")) return false;
-      if (avoid.has("train") && trainGroup.includes(m)) return false;
-      return true;
-    });
-    const data = await runPlan(lastResult.origin, lastResult.dest, bays, {
-      stations, transitModes, allowBike: !avoid.has("bike"), allowCab: !avoid.has("cab"),
-    });
-    if (myToken !== previewToken) return; // a newer toggle superseded this one
-    let h = "none";
-    if (data.options && data.options.length) {
-      const best = data.options.reduce((a, b) => (a.durationMin <= b.durationMin ? a : b));
-      h = { min: best.durationMin, pence: best.costPence };
-    }
-    previewCache.set(key, h);
-    apply(h);
-  } catch {
-    if (myToken === previewToken) badge.textContent = ""; // fail silently (don't block Update)
-  }
-}
-function updateAvoidPreviews() {
-  previewCache.clear();
-  $$("#avoid input").forEach((i) => {
-    const badge = i.closest("label").querySelector(".avoid-delta");
-    if (badge) badge.textContent = "";
-  });
 }
 
 // Pub within a 15-min walk of where this route boards; drop it into its step + map.
@@ -1418,7 +1287,6 @@ function resetApp() {
   pubStop = false;
   $("#pubChk").checked = false;
   $("#avoid").querySelectorAll("input").forEach((i) => (i.checked = false));
-  updateAvoidPreviews();
   peopleCount = 1;
   $("#peopleSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.n === "1"));
   whenMode = "now";
@@ -1433,12 +1301,12 @@ $("#homeLink").onclick = resetApp;
 
 // Changelog (tap the version pill). Concise, plain-English summaries.
 const CHANGELOG = [
-  ["0.41", [
-    "Fixed real train-fare lookups for journeys that start or end right at a National Rail station.",
+  ["0.42", [
+    "New route type: take transit most of the way, then an e-bike for the last mile from a station near your destination (e.g. tube to Earl's Court, then a Lime to the hospital).",
+    "Removed the experimental real-train-fares setting and the Avoid-toggle time/cost preview.",
   ]],
   ["0.40", [
     "Removed the railcard option.",
-    "New: real National Rail fares. Add the free fare proxy in Custom → Real train fares and journeys with a train leg show the actual cheapest single (no more “*” estimate).",
     "Tidied the bike cost section — dropped the repetitive “How the Lime fare works” dropdown, keeping just the round-trip pass tip.",
   ]],
   ["0.39", [
@@ -1486,7 +1354,6 @@ const CHANGELOG = [
     "Cost breakdown per leg and per traveller, with a party total and capping caveat.",
     "Live disruption alerts: a banner when a line on your route is delayed or suspended, with a Find alternative action.",
     "Accessibility filters (step-free only / avoid stairs), saved across visits.",
-    "Avoid toggles now preview their time/cost impact before you tap Update.",
     "Clear loading skeletons and recoverable empty / offline / error states.",
   ]],
   ["0.29", [
@@ -1616,17 +1483,6 @@ function drawRoute(data, o) {
   if (resetBtn) resetBtn.style.display = "none"; // hidden until the user moves the map
   map.fitBounds(L.latLngBounds(pts).pad(0.25));
 }
-
-// --- C1 wiring: debounced preview on each Avoid toggle ---------------------
-$$("#avoid input").forEach((input) => {
-  input.addEventListener("change", () => {
-    clearTimeout(previewTimer);
-    // Run a preview for every OFF toggle (turning one ON clears its own delta).
-    previewTimer = setTimeout(() => {
-      $$("#avoid input").forEach((i) => previewFor(i));
-    }, 400);
-  });
-});
 
 // --- B3 wiring: persist the accessibility preference -----------------------
 restoreAccess();

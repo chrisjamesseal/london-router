@@ -189,8 +189,6 @@ body {
 .seg.full { width: 100%; }
 .seg.full button { flex: 1; height: 34px; }
 .when-time { border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 11px; font-family: inherit; font-size: 15px; color: var(--ink); }
-.when-time.full { width: 100%; box-sizing: border-box; }
-.ex-beta { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); border: 1.5px solid var(--brand); border-radius: 6px; padding: 1px 5px; vertical-align: 1px; }
 .avoid { display: flex; flex-wrap: wrap; gap: 8px; }
 .avoid label { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 9px; cursor: pointer; }
 .avoid input { width: 16px; height: 16px; accent-color: var(--brand); }
@@ -394,10 +392,6 @@ body.has-results .splash { display: none; }
 .dbg { margin-top: 10px; text-align: left; }
 .dbg summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .dbg pre { white-space: pre-wrap; word-break: break-word; font-size: 10.5px; line-height: 1.4; background: #f5f7fa; border-radius: 8px; padding: 8px; margin-top: 6px; color: #444; }
-
-/* C1 — avoid preview delta */
-.avoid-delta { margin-left: 6px; font-size: 11.5px; font-weight: 700; color: var(--brand); }
-.avoid-delta.bad { color: #c0392b; }
 
 /* A2 — itinerary head + leg cards */
 .itin-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
